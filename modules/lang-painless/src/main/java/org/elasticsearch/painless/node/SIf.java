@@ -19,7 +19,7 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
@@ -46,6 +46,15 @@ public final class SIf extends AStatement {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        condition.storeSettings(settings);
+
+        if (ifblock != null) {
+            ifblock.storeSettings(settings);
+        }
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         condition.extractVariables(variables);
 
@@ -56,7 +65,7 @@ public final class SIf extends AStatement {
 
     @Override
     void analyze(Locals locals) {
-        condition.expected = Definition.BOOLEAN_TYPE;
+        condition.expected = boolean.class;
         condition.analyze(locals);
         condition = condition.cast(locals);
 

@@ -1,5 +1,5 @@
 ---
-"Test logging":
+"Test with date processor":
   - do:
       ingest.put_pipeline:
         id: "_id"
@@ -28,7 +28,7 @@
                 "date" : {
                   "field" : "timestamp",
                   "target_field" : "timestamp",
-                  "formats" : ["dd/MMM/YYYY:HH:mm:ss Z"]
+                  "formats" : ["dd/MMM/yyyy:HH:mm:ss xx"]
                 }
               },
               {
@@ -67,9 +67,7 @@
   - match: { _source.httpversion: "1.1" }
   - match: { _source.timestamp: "2014-09-08T02:54:42.000Z" }
   - match: { _source.geoip.continent_name: "North America" }
-  - match: { _source.geoip.city_name: "Fayetteville" }
   - match: { _source.geoip.country_iso_code: "US" }
-  - match: { _source.geoip.region_name: "North Carolina" }
 
 ---
 "Test mutate":

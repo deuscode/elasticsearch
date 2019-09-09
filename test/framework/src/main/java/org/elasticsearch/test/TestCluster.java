@@ -20,6 +20,8 @@
 package org.elasticsearch.test;
 
 import com.carrotsearch.hppc.ObjectArrayList;
+
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
 import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesResponse;
@@ -27,7 +29,6 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.indices.IndexTemplateMissingException;
 import org.elasticsearch.repositories.RepositoryMissingException;
@@ -35,7 +36,6 @@ import org.elasticsearch.repositories.RepositoryMissingException;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
@@ -47,12 +47,10 @@ import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcke
  */
 public abstract class TestCluster implements Closeable {
 
-    protected final Logger logger = Loggers.getLogger(getClass());
+    protected final Logger logger = LogManager.getLogger(getClass());
     private final long seed;
 
     protected Random random;
-
-    protected double transportClientRatio = 0.0;
 
     public TestCluster(long seed) {
         this.seed = seed;
@@ -65,10 +63,7 @@ public abstract class TestCluster implements Closeable {
     /**
      * This method should be executed before each test to reset the cluster to its initial state.
      */
-    public void beforeTest(Random random, double transportClientRatio) throws IOException, InterruptedException {
-        assert transportClientRatio >= 0.0 && transportClientRatio <= 1.0;
-        logger.debug("Reset test cluster with transport client ratio: [{}]", transportClientRatio);
-        this.transportClientRatio = transportClientRatio;
+    public void beforeTest(Random random) throws IOException, InterruptedException {
         this.random = new Random(random.nextLong());
     }
 

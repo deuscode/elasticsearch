@@ -19,6 +19,7 @@
 
 package org.elasticsearch.percolator;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.DelegatingAnalyzerWrapper;
 import org.apache.lucene.index.BinaryDocValues;
@@ -29,10 +30,9 @@ import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.index.memory.MemoryIndex;
-import org.apache.lucene.search.BooleanClause;
-import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.search.join.BitSetProducer;
@@ -55,10 +55,8 @@ import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.logging.DeprecationLogger;
-import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.lucene.search.Queries;
+import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
-import org.elasticsearch.common.xcontent.XContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentHelper;
@@ -68,11 +66,11 @@ import org.elasticsearch.index.analysis.FieldNameAnalyzer;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.IndexFieldDataCache;
 import org.elasticsearch.index.mapper.DocumentMapper;
-import org.elasticsearch.index.mapper.DocumentMapperForType;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.mapper.ParseContext;
 import org.elasticsearch.index.mapper.ParsedDocument;
+import org.elasticsearch.index.mapper.SourceToParse;
 import org.elasticsearch.index.query.AbstractQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryRewriteContext;
@@ -91,13 +89,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-import static org.elasticsearch.index.mapper.SourceToParse.source;
-import static org.elasticsearch.percolator.PercolatorFieldMapper.parseQuery;
-
 public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBuilder> {
     public static final String NAME = "percolate";
 
-    private static final DeprecationLogger DEPRECATION_LOGGER = new DeprecationLogger(Loggers.getLogger(ParseField.class));
+    private static final DeprecationLogger deprecationLogger = new DeprecationLogger(LogManager.getLogger(ParseField.class));
+    static final String DOCUMENT_TYPE_DEPRECATION_MESSAGE = "[types removal] Types are deprecated in [percolate] queries. " +
+            "The [document_type] should no longer be specified.";
+    static final String TYPE_DEPRECATION_MESSAGE = "[types removal] Types are deprecated in [percolate] queries. " +
+            "The [type] of the indexed document should no longer be specified.";
 
     static final ParseField DOCUMENT_FIELD = new ParseField("document");
     static final ParseField DOCUMENTS_FIELD = new ParseField("documents");
@@ -119,6 +118,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
     private final XContentType documentXContentType;
 
     private final String indexedDocumentIndex;
+    @Deprecated
     private final String indexedDocumentType;
     private final String indexedDocumentId;
     private final String indexedDocumentRouting;
@@ -132,7 +132,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
      */
     @Deprecated
     public PercolateQueryBuilder(String field, String documentType, BytesReference document) {
-        this(field, documentType, Collections.singletonList(document), XContentFactory.xContentType(document));
+        this(field, documentType, Collections.singletonList(document), XContentHelper.xContentType(document));
     }
 
     /**
@@ -178,7 +178,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
         this.documentSupplier = null;
     }
 
-    private PercolateQueryBuilder(String field, String documentType, Supplier<BytesReference> documentSupplier) {
+    protected PercolateQueryBuilder(String field, String documentType, Supplier<BytesReference> documentSupplier) {
         if (field == null) {
             throw new IllegalArgumentException("[field] is a required argument");
         }
@@ -222,9 +222,6 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
         if (indexedDocumentIndex == null) {
             throw new IllegalArgumentException("[index] is a required argument");
         }
-        if (indexedDocumentType == null) {
-            throw new IllegalArgumentException("[type] is a required argument");
-        }
         if (indexedDocumentId == null) {
             throw new IllegalArgumentException("[id] is a required argument");
         }
@@ -247,14 +244,8 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
     PercolateQueryBuilder(StreamInput in) throws IOException {
         super(in);
         field = in.readString();
-        if (in.getVersion().onOrAfter(Version.V_6_1_0)) {
-            name = in.readOptionalString();
-        }
-        if (in.getVersion().before(Version.V_6_0_0_beta1)) {
-            documentType = in.readString();
-        } else {
-            documentType = in.readOptionalString();
-        }
+        name = in.readOptionalString();
+        documentType = in.readOptionalString();
         indexedDocumentIndex = in.readOptionalString();
         indexedDocumentType = in.readOptionalString();
         indexedDocumentId = in.readOptionalString();
@@ -265,18 +256,9 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
         } else {
             indexedDocumentVersion = null;
         }
-        if (in.getVersion().onOrAfter(Version.V_6_1_0)) {
-            documents = in.readList(StreamInput::readBytesReference);
-        } else {
-            BytesReference document = in.readOptionalBytesReference();
-            documents = document != null ? Collections.singletonList(document) : Collections.emptyList();
-        }
+        documents = in.readList(StreamInput::readBytesReference);
         if (documents.isEmpty() == false) {
-            if (in.getVersion().onOrAfter(Version.V_5_3_0)) {
-                documentXContentType = XContentType.readFrom(in);
-            } else {
-                documentXContentType = XContentFactory.xContentType(documents.iterator().next());
-            }
+            documentXContentType = in.readEnum(XContentType.class);
         } else {
             documentXContentType = null;
         }
@@ -298,14 +280,8 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
             throw new IllegalStateException("supplier must be null, can't serialize suppliers, missing a rewriteAndFetch?");
         }
         out.writeString(field);
-        if (out.getVersion().onOrAfter(Version.V_6_1_0)) {
-            out.writeOptionalString(name);
-        }
-        if (out.getVersion().before(Version.V_6_0_0_beta1)) {
-            out.writeString(documentType);
-        } else {
-            out.writeOptionalString(documentType);
-        }
+        out.writeOptionalString(name);
+        out.writeOptionalString(documentType);
         out.writeOptionalString(indexedDocumentIndex);
         out.writeOptionalString(indexedDocumentType);
         out.writeOptionalString(indexedDocumentId);
@@ -317,20 +293,12 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
         } else {
             out.writeBoolean(false);
         }
-        if (out.getVersion().onOrAfter(Version.V_6_1_0)) {
-            out.writeVInt(documents.size());
-            for (BytesReference document : documents) {
-                out.writeBytesReference(document);
-            }
-        } else {
-            if (documents.size() > 1) {
-                throw new IllegalArgumentException("Nodes prior to 6.1.0 cannot accept multiple documents");
-            }
-            BytesReference doc = documents.isEmpty() ? null : documents.iterator().next();
-            out.writeOptionalBytesReference(doc);
+        out.writeVInt(documents.size());
+        for (BytesReference document : documents) {
+            out.writeBytesReference(document);
         }
-        if (documents.isEmpty() == false && out.getVersion().onOrAfter(Version.V_5_3_0)) {
-            documentXContentType.writeTo(out);
+        if (documents.isEmpty() == false) {
+            out.writeEnum(documentXContentType);
         }
     }
 
@@ -345,9 +313,10 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
         if (documents.isEmpty() == false) {
             builder.startArray(DOCUMENTS_FIELD.getPreferredName());
             for (BytesReference document : documents) {
-                try (XContentParser parser = XContentHelper.createParser(NamedXContentRegistry.EMPTY, document)) {
+                try (XContentParser parser = XContentHelper.createParser(NamedXContentRegistry.EMPTY,
+                        LoggingDeprecationHandler.INSTANCE, document)) {
                     parser.nextToken();
-                    XContentHelper.copyCurrentStructure(builder.generator(), parser);
+                    builder.generator().copyCurrentStructure(parser);
                 }
             }
             builder.endArray();
@@ -403,7 +372,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.START_ARRAY) {
-                if (DOCUMENTS_FIELD.match(currentFieldName)) {
+                if (DOCUMENTS_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     if (documentSpecified) {
                         throw new IllegalArgumentException("[" + PercolateQueryBuilder.NAME +
                             "] Either specified [document] or [documents], not both");
@@ -414,7 +383,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
                             try (XContentBuilder builder = XContentFactory.jsonBuilder()) {
                                 builder.copyCurrentStructure(parser);
                                 builder.flush();
-                                documents.add(builder.bytes());
+                                documents.add(BytesReference.bytes(builder));
                             }
                         } else {
                             throw new ParsingException(parser.getTokenLocation(), "[" + PercolateQueryBuilder.NAME +
@@ -426,7 +395,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
                         "] query does not field name [" + currentFieldName + "]");
                 }
             } else if (token == XContentParser.Token.START_OBJECT) {
-                if (DOCUMENT_FIELD.match(currentFieldName)) {
+                if (DOCUMENT_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     if (documentsSpecified) {
                         throw new IllegalArgumentException("[" + PercolateQueryBuilder.NAME +
                             "] Either specified [document] or [documents], not both");
@@ -435,34 +404,34 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
                     try (XContentBuilder builder = XContentFactory.jsonBuilder()) {
                         builder.copyCurrentStructure(parser);
                         builder.flush();
-                        documents.add(builder.bytes());
+                        documents.add(BytesReference.bytes(builder));
                     }
                 } else {
                     throw new ParsingException(parser.getTokenLocation(), "[" + PercolateQueryBuilder.NAME +
                             "] query does not support field name [" + currentFieldName + "]");
                 }
             } else if (token.isValue() || token == XContentParser.Token.VALUE_NULL) {
-                if (QUERY_FIELD.match(currentFieldName)) {
+                if (QUERY_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     field = parser.text();
-                } else if (NAME_FIELD.match(currentFieldName)) {
+                } else if (NAME_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     name = parser.textOrNull();
-                } else if (DOCUMENT_TYPE_FIELD.match(currentFieldName)) {
+                } else if (DOCUMENT_TYPE_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     documentType = parser.textOrNull();
-                } else if (INDEXED_DOCUMENT_FIELD_INDEX.match(currentFieldName)) {
+                } else if (INDEXED_DOCUMENT_FIELD_INDEX.match(currentFieldName, parser.getDeprecationHandler())) {
                     indexedDocumentIndex = parser.text();
-                } else if (INDEXED_DOCUMENT_FIELD_TYPE.match(currentFieldName)) {
+                } else if (INDEXED_DOCUMENT_FIELD_TYPE.match(currentFieldName, parser.getDeprecationHandler())) {
                     indexedDocumentType = parser.text();
-                } else if (INDEXED_DOCUMENT_FIELD_ID.match(currentFieldName)) {
+                } else if (INDEXED_DOCUMENT_FIELD_ID.match(currentFieldName, parser.getDeprecationHandler())) {
                     indexedDocumentId = parser.text();
-                } else if (INDEXED_DOCUMENT_FIELD_ROUTING.match(currentFieldName)) {
+                } else if (INDEXED_DOCUMENT_FIELD_ROUTING.match(currentFieldName, parser.getDeprecationHandler())) {
                     indexedDocumentRouting = parser.text();
-                } else if (INDEXED_DOCUMENT_FIELD_PREFERENCE.match(currentFieldName)) {
+                } else if (INDEXED_DOCUMENT_FIELD_PREFERENCE.match(currentFieldName, parser.getDeprecationHandler())) {
                     indexedDocumentPreference = parser.text();
-                } else if (INDEXED_DOCUMENT_FIELD_VERSION.match(currentFieldName)) {
+                } else if (INDEXED_DOCUMENT_FIELD_VERSION.match(currentFieldName, parser.getDeprecationHandler())) {
                     indexedDocumentVersion = parser.longValue();
-                } else if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName)) {
+                } else if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     boost = parser.floatValue();
-                } else if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName)) {
+                } else if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     queryName = parser.text();
                 } else {
                     throw new ParsingException(parser.getTokenLocation(), "[" + PercolateQueryBuilder.NAME +
@@ -522,11 +491,21 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
             if (source == null) {
                 return this; // not executed yet
             } else {
-                return new PercolateQueryBuilder(field, documentType, Collections.singletonList(source),
-                    XContentFactory.xContentType(source));
+                PercolateQueryBuilder rewritten = new PercolateQueryBuilder(field, documentType,
+                    Collections.singletonList(source), XContentHelper.xContentType(source));
+                if (name != null) {
+                    rewritten.setName(name);
+                }
+                return rewritten;
             }
         }
-        GetRequest getRequest = new GetRequest(indexedDocumentIndex, indexedDocumentType, indexedDocumentId);
+        GetRequest getRequest;
+        if (indexedDocumentType != null) {
+            deprecationLogger.deprecatedAndMaybeLog("percolate_with_type", TYPE_DEPRECATION_MESSAGE);
+            getRequest = new GetRequest(indexedDocumentIndex, indexedDocumentType, indexedDocumentId);
+        } else {
+            getRequest = new GetRequest(indexedDocumentIndex, indexedDocumentId);
+        }
         getRequest.preference("_local");
         getRequest.routing(indexedDocumentRouting);
         getRequest.preference(indexedDocumentPreference);
@@ -538,20 +517,26 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
             client.get(getRequest, ActionListener.wrap(getResponse -> {
                 if (getResponse.isExists() == false) {
                     throw new ResourceNotFoundException(
-                        "indexed document [{}/{}/{}] couldn't be found", indexedDocumentIndex, indexedDocumentType, indexedDocumentId
+                        "indexed document [{}{}/{}] couldn't be found", indexedDocumentIndex,
+                        indexedDocumentType == null ? "" : "/" + indexedDocumentType, indexedDocumentId
                     );
                 }
                 if(getResponse.isSourceEmpty()) {
                     throw new IllegalArgumentException(
-                        "indexed document [" + indexedDocumentIndex + "/" + indexedDocumentType + "/" + indexedDocumentId
-                            + "] source disabled"
+                        "indexed document [" + indexedDocumentIndex + (indexedDocumentType == null ? "" : "/" + indexedDocumentType) +
+                        "/" + indexedDocumentId + "] source disabled"
                     );
                 }
                 documentSupplier.set(getResponse.getSourceAsBytesRef());
                 listener.onResponse(null);
             }, listener::onFailure));
         });
-        return new PercolateQueryBuilder(field, documentType, documentSupplier::get);
+
+        PercolateQueryBuilder rewritten = new PercolateQueryBuilder(field, documentType, documentSupplier::get);
+        if (name != null) {
+            rewritten.setName(name);
+        }
+        return rewritten;
     }
 
     @Override
@@ -559,7 +544,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
         // Call nowInMillis() so that this query becomes un-cacheable since we
         // can't be sure that it doesn't use now or scripts
         context.nowInMillis();
-        if (indexedDocumentIndex != null || indexedDocumentType != null || indexedDocumentId != null || documentSupplier != null) {
+        if (indexedDocumentIndex != null || indexedDocumentId != null || documentSupplier != null) {
             throw new IllegalStateException("query builder must be rewritten first");
         }
 
@@ -580,32 +565,17 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
         final List<ParsedDocument> docs = new ArrayList<>();
         final DocumentMapper docMapper;
         final MapperService mapperService = context.getMapperService();
-        if (context.getIndexSettings().isSingleType()) {
-            Collection<String> types = mapperService.types();
-            if (types.size() != 1) {
-                throw new IllegalStateException("Only a single type should exist, but [" + types.size() + " types exists");
+        String type = mapperService.documentMapper().type();
+        if (documentType != null) {
+            deprecationLogger.deprecatedAndMaybeLog("percolate_with_document_type", DOCUMENT_TYPE_DEPRECATION_MESSAGE);
+            if (documentType.equals(type) == false) {
+                throw new IllegalArgumentException("specified document_type [" + documentType +
+                    "] is not equal to the actual type [" + type + "]");
             }
-            String type = types.iterator().next();
-            if (documentType != null) {
-                DEPRECATION_LOGGER.deprecated("[document_type] parameter has been deprecated because types have been deprecated");
-                if (documentType.equals(type) == false) {
-                    throw new IllegalArgumentException("specified document_type [" + documentType +
-                        "] is not equal to the actual type [" + type + "]");
-                }
-            }
-            docMapper = mapperService.documentMapper(type);
-            for (BytesReference document : documents) {
-                docs.add(docMapper.parse(source(context.index().getName(), type, "_temp_id", document, documentXContentType)));
-            }
-        } else {
-            if (documentType == null) {
-                throw new IllegalArgumentException("[percolate] query is missing required [document_type] parameter");
-            }
-            DocumentMapperForType docMapperForType = mapperService.documentMapperWithAutoCreate(documentType);
-            docMapper = docMapperForType.getDocumentMapper();
-            for (BytesReference document : documents) {
-                docs.add(docMapper.parse(source(context.index().getName(), documentType, "_temp_id", document, documentXContentType)));
-            }
+        }
+        docMapper = mapperService.documentMapper(type);
+        for (BytesReference document : documents) {
+            docs.add(docMapper.parse(new SourceToParse(context.index().getName(), type, "_temp_id", document, documentXContentType)));
         }
 
         FieldNameAnalyzer fieldNameAnalyzer = (FieldNameAnalyzer) docMapper.mappers().indexAnalyzer();
@@ -623,23 +593,29 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
             }
         };
         final IndexSearcher docSearcher;
+        final boolean excludeNestedDocuments;
         if (docs.size() > 1 || docs.get(0).docs().size() > 1) {
             assert docs.size() != 1 || docMapper.hasNestedObjects();
             docSearcher = createMultiDocumentSearcher(analyzer, docs);
+            excludeNestedDocuments = docMapper.hasNestedObjects() && docs.stream()
+                    .map(ParsedDocument::docs)
+                    .mapToInt(List::size)
+                    .anyMatch(size -> size > 1);
         } else {
             MemoryIndex memoryIndex = MemoryIndex.fromDocument(docs.get(0).rootDoc(), analyzer, true, false);
             docSearcher = memoryIndex.createSearcher();
             docSearcher.setQueryCache(null);
+            excludeNestedDocuments = false;
         }
 
-        PercolatorFieldMapper percolatorFieldMapper = (PercolatorFieldMapper) docMapper.mappers().getMapper(field);
-        boolean mapUnmappedFieldsAsString = percolatorFieldMapper.isMapUnmappedFieldAsText();
-        QueryShardContext percolateShardContext = wrap(context);
-
-        String name = this.name != null ? this.name : field;
         PercolatorFieldMapper.FieldType pft = (PercolatorFieldMapper.FieldType) fieldType;
-        PercolateQuery.QueryStore queryStore = createStore(pft.queryBuilderField, percolateShardContext, mapUnmappedFieldsAsString);
-        return pft.percolateQuery(name, queryStore, documents, docSearcher);
+        String name = this.name != null ? this.name : pft.name();
+        QueryShardContext percolateShardContext = wrap(context);
+        PercolateQuery.QueryStore queryStore = createStore(pft.queryBuilderField,
+            percolateShardContext,
+            pft.mapUnmappedFieldsAsText);
+
+        return pft.percolateQuery(name, queryStore, documents, docSearcher, excludeNestedDocuments, context.indexVersionCreated());
     }
 
     public String getField() {
@@ -659,6 +635,10 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
         return documentXContentType;
     }
 
+    public String getQueryName() {
+        return name;
+    }
+
     static IndexSearcher createMultiDocumentSearcher(Analyzer analyzer, Collection<ParsedDocument> docs) {
         RAMDirectory ramDirectory = new RAMDirectory();
         try (IndexWriter indexWriter = new IndexWriter(ramDirectory, new IndexWriterConfig(analyzer))) {
@@ -671,17 +651,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
 
             DirectoryReader directoryReader = DirectoryReader.open(indexWriter);
             assert directoryReader.leaves().size() == 1 : "Expected single leaf, but got [" + directoryReader.leaves().size() + "]";
-            final IndexSearcher slowSearcher = new IndexSearcher(directoryReader) {
-
-                @Override
-                public Weight createNormalizedWeight(Query query, boolean needsScores) throws IOException {
-                    BooleanQuery.Builder bq = new BooleanQuery.Builder();
-                    bq.add(query, BooleanClause.Occur.MUST);
-                    bq.add(Queries.newNestedFilter(), BooleanClause.Occur.MUST_NOT);
-                    return super.createNormalizedWeight(bq.build(), needsScores);
-                }
-
-            };
+            final IndexSearcher slowSearcher = new IndexSearcher(directoryReader);
             slowSearcher.setQueryCache(null);
             return slowSearcher;
         } catch (IOException e) {
@@ -700,48 +670,30 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
             if (binaryDocValues == null) {
                 return docId -> null;
             }
-            if (indexVersion.onOrAfter(Version.V_6_0_0_beta2)) {
-                return docId -> {
-                    if (binaryDocValues.advanceExact(docId)) {
-                        BytesRef qbSource = binaryDocValues.binaryValue();
-                        try (InputStream in = new ByteArrayInputStream(qbSource.bytes, qbSource.offset, qbSource.length)) {
-                            try (StreamInput input = new NamedWriteableAwareStreamInput(new InputStreamStreamInput(in), registry)) {
-                                input.setVersion(indexVersion);
-                                // Query builder's content is stored via BinaryFieldMapper, which has a custom encoding
-                                // to encode multiple binary values into a single binary doc values field.
-                                // This is the reason we need to first need to read the number of values and
-                                // then the length of the field value in bytes.
-                                int numValues = input.readVInt();
-                                assert numValues == 1;
-                                int valueLength = input.readVInt();
-                                assert valueLength > 0;
-                                QueryBuilder queryBuilder = input.readNamedWriteable(QueryBuilder.class);
-                                assert in.read() == -1;
-                                return PercolatorFieldMapper.toQuery(context, mapUnmappedFieldsAsString, queryBuilder);
-                            }
+            return docId -> {
+                if (binaryDocValues.advanceExact(docId)) {
+                    BytesRef qbSource = binaryDocValues.binaryValue();
+                    try (InputStream in = new ByteArrayInputStream(qbSource.bytes, qbSource.offset, qbSource.length)) {
+                        try (StreamInput input = new NamedWriteableAwareStreamInput(
+                                new InputStreamStreamInput(in, qbSource.length), registry)) {
+                            input.setVersion(indexVersion);
+                            // Query builder's content is stored via BinaryFieldMapper, which has a custom encoding
+                            // to encode multiple binary values into a single binary doc values field.
+                            // This is the reason we need to first need to read the number of values and
+                            // then the length of the field value in bytes.
+                            int numValues = input.readVInt();
+                            assert numValues == 1;
+                            int valueLength = input.readVInt();
+                            assert valueLength > 0;
+                            QueryBuilder queryBuilder = input.readNamedWriteable(QueryBuilder.class);
+                            assert in.read() == -1;
+                            return PercolatorFieldMapper.toQuery(context, mapUnmappedFieldsAsString, queryBuilder);
                         }
-                    } else {
-                        return null;
                     }
-                };
-            } else {
-                return docId -> {
-                    if (binaryDocValues.advanceExact(docId)) {
-                        BytesRef qbSource = binaryDocValues.binaryValue();
-                        if (qbSource.length > 0) {
-                            XContent xContent = PercolatorFieldMapper.QUERY_BUILDER_CONTENT_TYPE.xContent();
-                            try (XContentParser sourceParser = xContent.createParser(context.getXContentRegistry(), qbSource.bytes,
-                                qbSource.offset, qbSource.length)) {
-                                return parseQuery(context, mapUnmappedFieldsAsString, sourceParser);
-                            }
-                        } else {
-                            return null;
-                        }
-                    } else {
-                        return null;
-                    }
-                };
-            }
+                } else {
+                    return null;
+                }
+            };
         };
     }
 
@@ -754,7 +706,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
                     final IndexReaderContext topLevelContext = ReaderUtil.getTopLevelContext(context);
                     final IndexSearcher searcher = new IndexSearcher(topLevelContext);
                     searcher.setQueryCache(null);
-                    final Weight weight = searcher.createNormalizedWeight(query, false);
+                    final Weight weight = searcher.createWeight(searcher.rewrite(query), ScoreMode.COMPLETE_NO_SCORES, 1f);
                     final Scorer s = weight.scorer(context);
 
                     if (s != null) {
@@ -768,7 +720,7 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
             @Override
             @SuppressWarnings("unchecked")
             public <IFD extends IndexFieldData<?>> IFD getForField(MappedFieldType fieldType) {
-                IndexFieldData.Builder builder = fieldType.fielddataBuilder(shardContext.getFullyQualifiedIndexName());
+                IndexFieldData.Builder builder = fieldType.fielddataBuilder(shardContext.getFullyQualifiedIndex().getName());
                 IndexFieldDataCache cache = new IndexFieldDataCache.None();
                 CircuitBreakerService circuitBreaker = new NoneCircuitBreakerService();
                 return (IFD) builder.build(shardContext.getIndexSettings(), fieldType, cache, circuitBreaker,
@@ -776,5 +728,4 @@ public class PercolateQueryBuilder extends AbstractQueryBuilder<PercolateQueryBu
             }
         };
     }
-
 }

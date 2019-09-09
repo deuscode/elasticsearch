@@ -19,15 +19,16 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition.Cast;
+import org.elasticsearch.painless.CompilerSettings;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
+import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.lookup.PainlessCast;
+import org.elasticsearch.painless.lookup.PainlessLookupUtility;
 
 import java.util.Objects;
 import java.util.Set;
-
-import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
-import org.elasticsearch.painless.MethodWriter;
 
 /**
  * Represents a cast that is inserted into the tree replacing other casts.  (Internal only.)
@@ -35,9 +36,9 @@ import org.elasticsearch.painless.MethodWriter;
 final class ECast extends AExpression {
 
     private AExpression child;
-    private final Cast cast;
+    private final PainlessCast cast;
 
-    ECast(Location location, AExpression child, Cast cast) {
+    ECast(Location location, AExpression child, PainlessCast cast) {
         super(location);
 
         this.child = Objects.requireNonNull(child);
@@ -45,8 +46,13 @@ final class ECast extends AExpression {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        throw createError(new IllegalStateException("illegal tree structure"));
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
-        throw new IllegalStateException("Illegal tree structure.");
+        throw createError(new IllegalStateException("Illegal tree structure."));
     }
 
     @Override
@@ -63,6 +69,6 @@ final class ECast extends AExpression {
 
     @Override
     public String toString() {
-        return singleLineToString(cast.to, child);
+        return singleLineToString(PainlessLookupUtility.typeToCanonicalTypeName(cast.targetType), child);
     }
 }

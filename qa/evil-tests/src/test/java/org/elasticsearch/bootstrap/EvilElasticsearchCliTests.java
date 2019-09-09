@@ -19,14 +19,15 @@
 
 package org.elasticsearch.bootstrap;
 
-import java.util.Map;
 
 import org.elasticsearch.cli.ExitCodes;
 import org.elasticsearch.common.SuppressForbidden;
+import org.elasticsearch.common.io.PathUtils;
+import org.elasticsearch.common.settings.Settings;
 
 import static org.hamcrest.CoreMatchers.equalTo;
-import static org.hamcrest.Matchers.hasEntry;
-import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasSize;
 
 public class EvilElasticsearchCliTests extends ESElasticsearchCliTestCase {
 
@@ -39,12 +40,14 @@ public class EvilElasticsearchCliTests extends ESElasticsearchCliTestCase {
         runTest(
                 ExitCodes.OK,
                 true,
-                output -> {},
+                (output, error) -> {},
                 (foreground, pidFile, quiet, esSettings) -> {
-                    Map<String, String> settings = esSettings.settings().getAsMap();
-                    assertThat(settings.size(), equalTo(2));
-                    assertThat(settings, hasEntry("path.home", value));
-                    assertThat(settings, hasKey("path.logs")); // added by env initialization
+                    Settings settings = esSettings.settings();
+                    assertThat(settings.keySet(), hasSize(2));
+                    assertThat(
+                        settings.get("path.home"),
+                        equalTo(PathUtils.get(System.getProperty("user.dir")).resolve(value).toString()));
+                    assertThat(settings.keySet(), hasItem("path.logs")); // added by env initialization
                 });
 
         System.clearProperty("es.path.home");
@@ -52,12 +55,14 @@ public class EvilElasticsearchCliTests extends ESElasticsearchCliTestCase {
         runTest(
                 ExitCodes.OK,
                 true,
-                output -> {},
+                (output, error) -> {},
                 (foreground, pidFile, quiet, esSettings) -> {
-                    Map<String, String> settings = esSettings.settings().getAsMap();
-                    assertThat(settings.size(), equalTo(2));
-                    assertThat(settings, hasEntry("path.home", commandLineValue));
-                    assertThat(settings, hasKey("path.logs")); // added by env initialization
+                    Settings settings = esSettings.settings();
+                    assertThat(settings.keySet(), hasSize(2));
+                    assertThat(
+                        settings.get("path.home"),
+                        equalTo(PathUtils.get(System.getProperty("user.dir")).resolve(commandLineValue).toString()));
+                    assertThat(settings.keySet(), hasItem("path.logs")); // added by env initialization
                 },
                 "-Epath.home=" + commandLineValue);
 

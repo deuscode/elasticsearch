@@ -19,7 +19,7 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition.Type;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
@@ -40,8 +40,13 @@ public class PSubNullSafeField extends AStoreable {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        throw createError(new IllegalStateException("illegal tree structure"));
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
-        guarded.extractVariables(variables);
+        throw createError(new IllegalStateException("illegal tree structure"));
     }
 
     @Override
@@ -52,7 +57,7 @@ public class PSubNullSafeField extends AStoreable {
         guarded.read = read;
         guarded.analyze(locals);
         actual = guarded.actual;
-        if (actual.clazz.isPrimitive()) {
+        if (actual.isPrimitive()) {
             throw new IllegalArgumentException("Result of null safe operator must be nullable");
         }
     }
@@ -69,7 +74,7 @@ public class PSubNullSafeField extends AStoreable {
     }
 
     @Override
-    void updateActual(Type actual) {
+    void updateActual(Class<?> actual) {
         guarded.updateActual(actual);
     }
 

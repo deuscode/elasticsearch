@@ -1,12 +1,12 @@
 [[search-suggesters]]
-== Suggesters
+=== Suggesters
 
 The suggest feature suggests similar looking terms based on a provided
 text by using a suggester. Parts of the suggest feature are still under
 development.
 
 The suggest request part is defined alongside the query part in a `_search`
-request.
+request. If the query part is left out, only suggestions are returned.
 
 NOTE: `_suggest` endpoint has been deprecated in favour of using suggest via
 `_search` endpoint. In 5.0, the `_search` endpoint has been optimized for
@@ -23,7 +23,7 @@ POST twitter/_search
   },
   "suggest" : {
     "my-suggestion" : {
-      "text" : "trying out Elasticsearch",
+      "text" : "tring out Elasticsearch",
       "term" : {
         "field" : "message"
       }
@@ -68,7 +68,7 @@ entries. Each entry is effectively a token from the suggest text and
 contains the suggestion entry text, the original start offset and length
 in the suggest text and if found an arbitrary number of options.
 
-[source,js]
+[source,console-result]
 --------------------------------------------------
 {
   "_shards": ...
@@ -109,7 +109,7 @@ term suggester's score is based on the edit distance.
 
 [float]
 [[global-suggest]]
-=== Global suggest text
+==== Global suggest text
 
 To avoid repetition of the suggest text, it is possible to define a
 global text. In the example below the suggest text is defined globally

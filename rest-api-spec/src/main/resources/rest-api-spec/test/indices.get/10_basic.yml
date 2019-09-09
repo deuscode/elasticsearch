@@ -9,7 +9,9 @@ setup:
             test_alias: {}
             test_blias: {}
           mappings:
-            type_1: {}
+            properties:
+              foo:
+                type: keyword
           settings:
             number_of_shards:   1
             number_of_replicas: 1
@@ -137,10 +139,6 @@ setup:
 ---
 "Should return test_index_3 if expand_wildcards=closed":
 
-  - skip:
-      version:     " - 2.0.0"
-      reason:      Requires fix for issue 7258
-
   - do:
       indices.get:
         index: test_index_*
@@ -160,3 +158,10 @@ setup:
   - is_true: test_index_2.settings
   - is_true: test_index_3.settings
 
+---
+"Should return an exception when querying invalid indices":
+
+ - do:
+     catch: bad_request
+     indices.get:
+       index: _foo

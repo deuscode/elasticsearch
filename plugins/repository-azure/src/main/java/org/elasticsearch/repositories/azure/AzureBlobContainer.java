@@ -21,46 +21,49 @@ package org.elasticsearch.repositories.azure;
 
 import com.microsoft.azure.storage.LocationMode;
 import com.microsoft.azure.storage.StorageException;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.ActionRunnable;
+import org.elasticsearch.action.support.GroupedActionListener;
+import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.blobstore.BlobContainer;
 import org.elasticsearch.common.blobstore.BlobMetaData;
 import org.elasticsearch.common.blobstore.BlobPath;
+import org.elasticsearch.common.blobstore.DeleteResult;
 import org.elasticsearch.common.blobstore.support.AbstractBlobContainer;
-import org.elasticsearch.common.io.Streams;
-import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.repositories.RepositoryException;
+import org.elasticsearch.threadpool.ThreadPool;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URISyntaxException;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.NoSuchFileException;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 
 public class AzureBlobContainer extends AbstractBlobContainer {
 
-    protected final Logger logger = Loggers.getLogger(AzureBlobContainer.class);
-    protected final AzureBlobStore blobStore;
+    private final Logger logger = LogManager.getLogger(AzureBlobContainer.class);
+    private final AzureBlobStore blobStore;
+    private final ThreadPool threadPool;
+    private final String keyPath;
 
-    protected final String keyPath;
-    protected final String repositoryName;
-
-    public AzureBlobContainer(String repositoryName, BlobPath path, AzureBlobStore blobStore) {
+    AzureBlobContainer(BlobPath path, AzureBlobStore blobStore, ThreadPool threadPool) {
         super(path);
         this.blobStore = blobStore;
         this.keyPath = path.buildAsString();
-        this.repositoryName = repositoryName;
+        this.threadPool = threadPool;
     }
 
-    @Override
-    public boolean blobExists(String blobName) {
+    private boolean blobExists(String blobName) {
         logger.trace("blobExists({})", blobName);
         try {
-            return blobStore.blobExists(blobStore.container(), buildKey(blobName));
+            return blobStore.blobExists(buildKey(blobName));
         } catch (URISyntaxException | StorageException e) {
-            logger.warn("can not access [{}] in container {{}}: {}", blobName, blobStore.container(), e.getMessage());
+            logger.warn("can not access [{}] in container {{}}: {}", blobName, blobStore, e.getMessage());
         }
         return false;
     }
@@ -80,7 +83,7 @@ public class AzureBlobContainer extends AbstractBlobContainer {
         }
 
         try {
-            return blobStore.getInputStream(blobStore.container(), buildKey(blobName));
+            return blobStore.getInputStream(buildKey(blobName));
         } catch (StorageException e) {
             if (e.getHttpStatusCode() == HttpURLConnection.HTTP_NOT_FOUND) {
                 throw new NoSuchFileException(e.getMessage());
@@ -92,44 +95,71 @@ public class AzureBlobContainer extends AbstractBlobContainer {
     }
 
     @Override
-    public void writeBlob(String blobName, InputStream inputStream, long blobSize) throws IOException {
-        if (blobExists(blobName)) {
-            throw new FileAlreadyExistsException("blob [" + blobName + "] already exists, cannot overwrite");
-        }
-        logger.trace("writeBlob({}, stream, {})", blobName, blobSize);
-        try (OutputStream stream = createOutput(blobName)) {
-            Streams.copy(inputStream, stream);
+    public void writeBlob(String blobName, InputStream inputStream, long blobSize, boolean failIfAlreadyExists) throws IOException {
+        logger.trace("writeBlob({}, stream, {})", buildKey(blobName), blobSize);
+
+        try {
+            blobStore.writeBlob(buildKey(blobName), inputStream, blobSize, failIfAlreadyExists);
+        } catch (URISyntaxException|StorageException e) {
+            throw new IOException("Can not write blob " + blobName, e);
         }
     }
 
-    private OutputStream createOutput(String blobName) throws IOException {
-        try {
-            return new AzureOutputStream(blobStore.getOutputStream(blobStore.container(), buildKey(blobName)));
-        } catch (StorageException e) {
-            if (e.getHttpStatusCode() == HttpURLConnection.HTTP_NOT_FOUND) {
-                throw new NoSuchFileException(e.getMessage());
-            }
-            throw new IOException(e);
-        } catch (URISyntaxException e) {
-            throw new IOException(e);
-        } catch (IllegalArgumentException e) {
-            throw new RepositoryException(repositoryName, e.getMessage());
-        }
+    @Override
+    public void writeBlobAtomic(String blobName, InputStream inputStream, long blobSize, boolean failIfAlreadyExists) throws IOException {
+        writeBlob(blobName, inputStream, blobSize, failIfAlreadyExists);
     }
 
     @Override
     public void deleteBlob(String blobName) throws IOException {
         logger.trace("deleteBlob({})", blobName);
 
-        if (!blobExists(blobName)) {
-            throw new NoSuchFileException("Blob [" + blobName + "] does not exist");
-        }
-
         try {
-            blobStore.deleteBlob(blobStore.container(), buildKey(blobName));
-        } catch (URISyntaxException | StorageException e) {
-            logger.warn("can not access [{}] in container {{}}: {}", blobName, blobStore.container(), e.getMessage());
+            blobStore.deleteBlob(buildKey(blobName));
+        } catch (StorageException e) {
+            if (e.getHttpStatusCode() == HttpURLConnection.HTTP_NOT_FOUND) {
+                throw new NoSuchFileException(e.getMessage());
+            }
             throw new IOException(e);
+        } catch (URISyntaxException e) {
+            throw new IOException(e);
+        }
+    }
+
+    @Override
+    public DeleteResult delete() throws IOException {
+        try {
+            return blobStore.deleteBlobDirectory(keyPath, threadPool.executor(AzureRepositoryPlugin.REPOSITORY_THREAD_POOL_NAME));
+        } catch (URISyntaxException | StorageException e) {
+            throw new IOException(e);
+        }
+    }
+
+    @Override
+    public void deleteBlobsIgnoringIfNotExists(List<String> blobNames) throws IOException {
+        final PlainActionFuture<Void> result = PlainActionFuture.newFuture();
+        if (blobNames.isEmpty()) {
+            result.onResponse(null);
+        } else {
+            final GroupedActionListener<Void> listener =
+                new GroupedActionListener<>(ActionListener.map(result, v -> null), blobNames.size());
+            final ExecutorService executor = threadPool.executor(AzureRepositoryPlugin.REPOSITORY_THREAD_POOL_NAME);
+            // Executing deletes in parallel since Azure SDK 8 is using blocking IO while Azure does not provide a bulk delete API endpoint
+            // TODO: Upgrade to newer non-blocking Azure SDK 11 and execute delete requests in parallel that way.
+            for (String blobName : blobNames) {
+                executor.execute(new ActionRunnable<>(listener) {
+                    @Override
+                    protected void doRun() throws IOException {
+                        deleteBlobIgnoringIfNotExists(blobName);
+                        listener.onResponse(null);
+                    }
+                });
+            }
+        }
+        try {
+            result.actionGet();
+        } catch (Exception e) {
+            throw new IOException("Exception during bulk delete", e);
         }
     }
 
@@ -138,26 +168,9 @@ public class AzureBlobContainer extends AbstractBlobContainer {
         logger.trace("listBlobsByPrefix({})", prefix);
 
         try {
-            return blobStore.listBlobsByPrefix(blobStore.container(), keyPath, prefix);
+            return blobStore.listBlobsByPrefix(keyPath, prefix);
         } catch (URISyntaxException | StorageException e) {
-            logger.warn("can not access [{}] in container {{}}: {}", prefix, blobStore.container(), e.getMessage());
-            throw new IOException(e);
-        }
-    }
-
-    @Override
-    public void move(String sourceBlobName, String targetBlobName) throws IOException {
-        logger.trace("move({}, {})", sourceBlobName, targetBlobName);
-        try {
-            String source = keyPath + sourceBlobName;
-            String target = keyPath + targetBlobName;
-
-            logger.debug("moving blob [{}] to [{}] in container {{}}", source, target, blobStore.container());
-
-            blobStore.moveBlob(blobStore.container(), source, target);
-        } catch (URISyntaxException | StorageException e) {
-            logger.warn("can not move blob [{}] to [{}] in container {{}}: {}", sourceBlobName, targetBlobName, blobStore.container(),
-                e.getMessage());
+            logger.warn("can not access [{}] in container {{}}: {}", prefix, blobStore, e.getMessage());
             throw new IOException(e);
         }
     }
@@ -166,6 +179,16 @@ public class AzureBlobContainer extends AbstractBlobContainer {
     public Map<String, BlobMetaData> listBlobs() throws IOException {
         logger.trace("listBlobs()");
         return listBlobsByPrefix(null);
+    }
+
+    @Override
+    public Map<String, BlobContainer> children() throws IOException {
+        final BlobPath path = path();
+        try {
+            return blobStore.children(path);
+        } catch (URISyntaxException | StorageException e) {
+            throw new IOException("Failed to list children in path [" + path.buildAsString() + "].", e);
+        }
     }
 
     protected String buildKey(String blobName) {

@@ -19,6 +19,7 @@
 
 package org.elasticsearch.painless.node;
 
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
@@ -41,15 +42,20 @@ public final class EStatic extends AExpression {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        // do nothing
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         // Do nothing.
     }
 
     @Override
     void analyze(Locals locals) {
-        try {
-            actual = locals.getDefinition().getType(type);
-        } catch (IllegalArgumentException exception) {
+        actual = locals.getPainlessLookup().canonicalTypeNameToType(type);
+
+        if (actual == null) {
             throw createError(new IllegalArgumentException("Not a type [" + type + "]."));
         }
     }

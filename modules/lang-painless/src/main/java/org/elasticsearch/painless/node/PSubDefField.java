@@ -19,14 +19,15 @@
 
 package org.elasticsearch.painless.node;
 
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.DefBootstrap;
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Type;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.lookup.def;
 
+import java.time.ZonedDateTime;
 import java.util.Objects;
 import java.util.Set;
 
@@ -44,13 +45,19 @@ final class PSubDefField extends AStoreable {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        throw createError(new IllegalStateException("illegal tree structure"));
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         throw createError(new IllegalStateException("Illegal tree structure."));
     }
 
     @Override
     void analyze(Locals locals) {
-        actual = expected == null || explicit ? Definition.DEF_TYPE : expected;
+        // TODO: remove ZonedDateTime exception when JodaCompatibleDateTime is removed
+        actual = expected == null || expected == ZonedDateTime.class || explicit ? def.class : expected;
     }
 
     @Override
@@ -58,7 +65,7 @@ final class PSubDefField extends AStoreable {
         writer.writeDebugInfo(location);
 
         org.objectweb.asm.Type methodType =
-            org.objectweb.asm.Type.getMethodType(actual.type, Definition.DEF_TYPE.type);
+            org.objectweb.asm.Type.getMethodType(MethodWriter.getType(actual), org.objectweb.asm.Type.getType(Object.class));
         writer.invokeDefCall(value, methodType, DefBootstrap.LOAD);
     }
 
@@ -73,7 +80,7 @@ final class PSubDefField extends AStoreable {
     }
 
     @Override
-    void updateActual(Type actual) {
+    void updateActual(Class<?> actual) {
         this.actual = actual;
     }
 
@@ -87,7 +94,7 @@ final class PSubDefField extends AStoreable {
         writer.writeDebugInfo(location);
 
         org.objectweb.asm.Type methodType =
-            org.objectweb.asm.Type.getMethodType(actual.type, Definition.DEF_TYPE.type);
+            org.objectweb.asm.Type.getMethodType(MethodWriter.getType(actual), org.objectweb.asm.Type.getType(Object.class));
         writer.invokeDefCall(value, methodType, DefBootstrap.LOAD);
     }
 
@@ -95,8 +102,8 @@ final class PSubDefField extends AStoreable {
     void store(MethodWriter writer, Globals globals) {
         writer.writeDebugInfo(location);
 
-        org.objectweb.asm.Type methodType =
-            org.objectweb.asm.Type.getMethodType(Definition.VOID_TYPE.type, Definition.DEF_TYPE.type, actual.type);
+        org.objectweb.asm.Type methodType = org.objectweb.asm.Type.getMethodType(
+            org.objectweb.asm.Type.getType(void.class), org.objectweb.asm.Type.getType(Object.class), MethodWriter.getType(actual));
         writer.invokeDefCall(value, methodType, DefBootstrap.STORE);
     }
 

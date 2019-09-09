@@ -1,5 +1,8 @@
 [[query-dsl-match-query-phrase]]
-=== Match Phrase Query
+=== Match phrase query
+++++
+<titleabbrev>Match phrase</titleabbrev>
+++++
 
 The `match_phrase` query analyzes the text and creates a `phrase` query
 out of the analyzed text. For example:
@@ -39,3 +42,5 @@ GET /_search
 }
 --------------------------------------------------
 // CONSOLE
+
+This query also accepts `zero_terms_query`, as explained in <<query-dsl-match-query, `match` query>>.

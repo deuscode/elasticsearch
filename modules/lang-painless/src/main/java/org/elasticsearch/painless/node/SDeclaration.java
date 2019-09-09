@@ -19,7 +19,7 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition.Type;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Locals.Variable;
@@ -50,6 +50,13 @@ public final class SDeclaration extends AStatement {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        if (expression != null) {
+            expression.storeSettings(settings);
+        }
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         variables.add(name);
 
@@ -60,21 +67,19 @@ public final class SDeclaration extends AStatement {
 
     @Override
     void analyze(Locals locals) {
-        final Type type;
+        Class<?> clazz = locals.getPainlessLookup().canonicalTypeNameToType(this.type);
 
-        try {
-            type = locals.getDefinition().getType(this.type);
-        } catch (IllegalArgumentException exception) {
+        if (clazz == null) {
             throw createError(new IllegalArgumentException("Not a type [" + this.type + "]."));
         }
 
         if (expression != null) {
-            expression.expected = type;
+            expression.expected = clazz;
             expression.analyze(locals);
             expression = expression.cast(locals);
         }
 
-        variable = locals.addVariable(location, type, name, false);
+        variable = locals.addVariable(location, clazz, name, false);
     }
 
     @Override
@@ -82,7 +87,7 @@ public final class SDeclaration extends AStatement {
         writer.writeStatementOffset(location);
 
         if (expression == null) {
-            Class<?> sort = variable.type.clazz;
+            Class<?> sort = variable.clazz;
 
             if (sort == void.class || sort == boolean.class || sort == byte.class ||
                 sort == short.class || sort == char.class || sort == int.class) {
@@ -100,7 +105,7 @@ public final class SDeclaration extends AStatement {
             expression.write(writer, globals);
         }
 
-        writer.visitVarInsn(variable.type.type.getOpcode(Opcodes.ISTORE), variable.getSlot());
+        writer.visitVarInsn(MethodWriter.getType(variable.clazz).getOpcode(Opcodes.ISTORE), variable.getSlot());
     }
 
     @Override

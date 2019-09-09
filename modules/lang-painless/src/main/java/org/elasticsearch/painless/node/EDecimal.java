@@ -19,10 +19,10 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
 
 import java.util.Objects;
@@ -42,7 +42,14 @@ public final class EDecimal extends AExpression {
     }
 
     @Override
-    void extractVariables(Set<String> variables) {}
+    void storeSettings(CompilerSettings settings) {
+        // Do nothing.
+    }
+
+    @Override
+    void extractVariables(Set<String> variables) {
+        // Do nothing.
+    }
 
     @Override
     void analyze(Locals locals) {
@@ -53,7 +60,7 @@ public final class EDecimal extends AExpression {
         if (value.endsWith("f") || value.endsWith("F")) {
             try {
                 constant = Float.parseFloat(value.substring(0, value.length() - 1));
-                actual = Definition.FLOAT_TYPE;
+                actual = float.class;
             } catch (NumberFormatException exception) {
                 throw createError(new IllegalArgumentException("Invalid float constant [" + value + "]."));
             }
@@ -64,7 +71,7 @@ public final class EDecimal extends AExpression {
             }
             try {
                 constant = Double.parseDouble(toParse);
-                actual = Definition.DOUBLE_TYPE;
+                actual = double.class;
             } catch (NumberFormatException exception) {
                 throw createError(new IllegalArgumentException("Invalid double constant [" + value + "]."));
             }

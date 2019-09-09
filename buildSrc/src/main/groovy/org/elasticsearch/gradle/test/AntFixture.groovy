@@ -58,6 +58,9 @@ public class AntFixture extends AntTask implements Fixture {
     @Input
     boolean useShell = false
 
+    @Input
+    int maxWaitInSeconds = 30
+
     /**
      * A flag to indicate whether the fixture should be run in the foreground, or spawned.
      * It is protected so subclasses can override (eg RunTask).
@@ -69,7 +72,6 @@ public class AntFixture extends AntTask implements Fixture {
      * as well as a groovy AntBuilder, to enable running ant condition checks. The default wait
      * condition is for http on the http port.
      */
-    @Input
     Closure waitCondition = { AntFixture fixture, AntBuilder ant ->
         File tmpFile = new File(fixture.cwd, 'wait.success')
         ant.get(src: "http://${fixture.addressAndPort}",
@@ -129,7 +131,7 @@ public class AntFixture extends AntTask implements Fixture {
 
         String failedProp = "failed${name}"
         // first wait for resources, or the failure marker from the wrapper script
-        ant.waitfor(maxwait: '30', maxwaitunit: 'second', checkevery: '500', checkeveryunit: 'millisecond', timeoutproperty: failedProp) {
+        ant.waitfor(maxwait: maxWaitInSeconds, maxwaitunit: 'second', checkevery: '500', checkeveryunit: 'millisecond', timeoutproperty: failedProp) {
             or {
                 resourceexists {
                     file(file: failureMarker.toString())
@@ -150,11 +152,11 @@ public class AntFixture extends AntTask implements Fixture {
         }
 
         // the process is started (has a pid) and is bound to a network interface
-        // so now wait undil the waitCondition has been met
+        // so now evaluates if the waitCondition is successful
         // TODO: change this to a loop?
         boolean success
         try {
-            success = waitCondition(this, ant) == false
+            success = waitCondition(this, ant)
         } catch (Exception e) {
             String msg = "Wait condition caught exception for ${name}"
             logger.error(msg, e)

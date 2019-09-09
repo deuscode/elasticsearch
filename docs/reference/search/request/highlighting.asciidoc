@@ -1,11 +1,16 @@
-[[search-request-highlighting]]
-=== Highlighting
+[[request-body-search-highlighting]]
+==== Highlighting
 
 Highlighters enable you to get highlighted snippets from one or more fields
 in your search results so you can show users where the query matches are.
 When you request highlights, the response contains an additional `highlight`
 element for each search hit that includes the highlighted fields and the
 highlighted fragments.
+
+NOTE: Highlighters don't reflect the boolean logic of a query when extracting
+ terms to highlight. Thus, for some complex boolean queries (e.g nested boolean
+ queries, queries using `minimum_should_match` etc.), parts of documents may be
+ highlighted that don't correspond to query matches.
 
 Highlighting requires the actual content of a field. If the field is not
 stored (the mapping does not set `store` to `true`), the actual `_source` is
@@ -24,7 +29,7 @@ GET /_search
     },
     "highlight" : {
         "fields" : {
-            "comment" : {}
+            "content" : {}
         }
     }
 }
@@ -37,7 +42,7 @@ highlighter). You can specify the highlighter `type` you want to use
 for each field.
 
 [[unified-highlighter]]
-==== Unified highlighter
+===== Unified highlighter
 The `unified` highlighter uses the Lucene Unified Highlighter. This
 highlighter breaks the text into sentences and uses the BM25 algorithm to score
 individual sentences as if they were documents in the corpus. It also supports
@@ -45,7 +50,7 @@ accurate phrase and multi-term (fuzzy, prefix, regex) highlighting. This is the
 default highlighter.
 
 [[plain-highlighter]]
-==== Plain highlighter
+===== Plain highlighter
 The `plain` highlighter uses the standard Lucene highlighter. It attempts to
 reflect the query matching logic in terms of understanding word importance and
 any word positioning criteria in phrase queries.
@@ -60,7 +65,7 @@ If you want to highlight a lot of fields in a lot of documents with complex
 queries, we recommend using the `unified` highlighter on `postings` or `term_vector` fields.
 
 [[fast-vector-highlighter]]
-==== Fast vector highlighter
+===== Fast vector highlighter
 The `fvh` highlighter uses the Lucene Fast Vector highlighter.
 This highlighter can be used on fields with `term_vector` set to
 `with_positions_offsets` in the mapping. The fast vector highlighter:
@@ -74,8 +79,12 @@ This highlighter can be used on fields with `term_vector` set to
   for things like phrase matches being sorted above term matches when
   highlighting a Boosting Query that boosts phrase matches over term matches
 
+[WARNING]
+The `fvh` highlighter does not support span queries. If you need support for
+span queries, try an alternative highlighter, such as the `unified` highlighter.
+
 [[offsets-strategy]]
-==== Offsets Strategy
+===== Offsets Strategy
 To create meaningful search snippets from the terms being queried,
 the highlighter needs to know the start and end character offsets of each word
 in the original text. These offsets can be obtained from:
@@ -88,7 +97,7 @@ the highlighted documents. This is important if you have large fields because
 it doesn't require reanalyzing the text to be highlighted. It also requires less
 disk space than using `term_vectors`.
 
-* Term vectors. If `term_vector` information is provided by setting 
+* Term vectors. If `term_vector` information is provided by setting
 `term_vector` to `with_positions_offsets` in the mapping, the `unified`
 highlighter automatically uses the `term_vector` to highlight the field.
 It's fast especially for large fields (> `1MB`) and for highlighting multi-term queries like
@@ -101,8 +110,14 @@ Lucene's query execution planner to get access to low-level match information on
 the current document. This is repeated for every field and every document that
 needs highlighting. The `plain` highlighter always uses plain highlighting.
 
+[WARNING]
+Plain highlighting for large texts may require substantial amount of time and memory.
+To protect against this, the maximum number of text characters that will be analyzed has been
+limited to 1000000. This default limit can be changed
+for a particular index with the index setting `index.highlight.max_analyzed_offset`.
+
 [[highlighting-settings]]
-==== Highlighting Settings
+===== Highlighting Settings
 
 Highlighting settings can be set on a global level and overridden at
 the field level.
@@ -121,7 +136,7 @@ the `fvh` highlighter.
 boundaries.  The `boundary_max_scan` setting controls how far to scan for
 boundary characters. Only valid for the `fvh` highlighter.
 `sentence`::: Break highlighted fragments at the next sentence boundary, as
-determined by Java's 
+determined by Java's
 https://docs.oracle.com/javase/8/docs/api/java/text/BreakIterator.html[BreakIterator].
 You can specify the locale to use with `boundary_scanner_locale`.
 +
@@ -134,10 +149,14 @@ by Java's https://docs.oracle.com/javase/8/docs/api/java/text/BreakIterator.html
 You can specify the locale to use with `boundary_scanner_locale`.
 
 boundary_scanner_locale:: Controls which locale is used to search for sentence
-and word boundaries.
+and word boundaries. This parameter takes a form of a language tag,
+e.g. `"en-US"`,  `"fr-FR"`, `"ja-JP"`. More info can be found in the
+https://docs.oracle.com/javase/8/docs/api/java/util/Locale.html#forLanguageTag-java.lang.String-[Locale Language Tag]
+documentation. The default value is https://docs.oracle.com/javase/8/docs/api/java/util/Locale.html#ROOT[ Locale.ROOT].
 
-encoder:: Indicates if the highlighted text should be HTML encoded:
-`default` (no encoding) or `html` (escapes HTML highlighting tags).
+encoder:: Indicates if the snippet should be HTML encoded:
+`default` (no encoding) or `html` (HTML-escape the snippet text and then
+insert the highlighting tags)
 
 fields:: Specifies the fields to retrieve highlights for. You can use wildcards
 to specify fields. For example, you could specify `comment_*` to
@@ -156,7 +175,7 @@ snippets: `simple` or `span`. Only valid for the `plain` highlighter.
 Defaults to `span`.
 
 `simple`::: Breaks up text into same-sized fragments.
-`span`::: Breaks up text into same-sized fragments, but tried to avoid
+`span`::: Breaks up text into same-sized fragments, but tries to avoid
 breaking up text between highlighted terms. This is helpful when you're
 querying for phrases. Default.
 
@@ -193,12 +212,16 @@ handy when you need to highlight short texts such as a title or
 address, but fragmentation is not required. If `number_of_fragments`
 is 0, `fragment_size` is ignored. Defaults to 5.
 
-order:: Sorts highlighted fragments by score when set to `score`. Only valid for
-the `unified` highlighter.
+order:: Sorts highlighted fragments by score when set to `score`.  By default,
+fragments will be output in the order they appear in the field (order: `none`).
+Setting this option to `score` will output the most relevant fragments first.
+Each highlighter applies its own logic to compute relevancy scores. See
+the document <<highlighter-internal-work, How highlighters work internally>>
+for more details how different highlighters find the best fragments.
 
 phrase_limit:: Controls the number of matching phrases in a document that are
 considered. Prevents the `fvh` highlighter from analyzing too many phrases
-and consuming too much memory. When using `matched_fields, `phrase_limit`
+and consuming too much memory. When using `matched_fields`, `phrase_limit`
 phrases per matched field are considered. Raising the limit increases query
 time and consumes more memory. Only supported by the `fvh` highlighter.
 Defaults to 256.
@@ -232,7 +255,7 @@ type:: The highlighter to use: `unified`, `plain`, or `fvh`. Defaults to
 `unified`.
 
 [[highlighting-examples]]
-==== Highlighting Examples
+===== Highlighting Examples
 
 * <<override-global-settings, Override global settings>>
 * <<specify-highlight-query, Specify a highlight query>>
@@ -248,7 +271,7 @@ type:: The highlighter to use: `unified`, `plain`, or `fvh`. Defaults to
 
 [[override-global-settings]]
 [float]
-=== Override global settings
+==== Override global settings
 
 You can specify highlighter settings globally and selectively override them for
 individual fields.
@@ -277,7 +300,7 @@ GET /_search
 
 [float]
 [[specify-highlight-query]]
-=== Specify a highlight query
+==== Specify a highlight query
 
 You can specify a `highlight_query` to take additional information into account
 when highlighting. For example, the following query includes both the search
@@ -347,7 +370,7 @@ GET /_search
 
 [float]
 [[set-highlighter-type]]
-=== Set highlighter type
+==== Set highlighter type
 
 The `type` field allows to force a specific highlighter type.
 The allowed values are: `unified`, `plain` and `fvh`.
@@ -372,7 +395,7 @@ GET /_search
 
 [[configure-tags]]
 [float]
-=== Configure highlighting tags
+==== Configure highlighting tags
 
 By default, the highlighting will wrap highlighted text in `<em>` and
 `</em>`. This can be controlled by setting `pre_tags` and `post_tags`,
@@ -441,7 +464,7 @@ GET /_search
 
 [float]
 [[highlight-source]]
-=== Highlight on source
+==== Highlight on source
 
 Forces the highlighting to highlight fields based on the source even if fields
 are stored separately. Defaults to `false`.
@@ -466,7 +489,7 @@ GET /_search
 
 [[highlight-all]]
 [float]
-=== Highlight in all fields
+==== Highlight in all fields
 
 By default, only fields that contains a query match are highlighted. Set
 `require_field_match` to `false` to highlight all fields.
@@ -491,7 +514,7 @@ GET /_search
 
 [[matched-fields]]
 [float]
-=== Combine matches on multiple fields
+==== Combine matches on multiple fields
 
 WARNING: This is only supported by the `fvh` highlighter
 
@@ -628,7 +651,7 @@ to
 
 [[explicit-field-order]]
 [float]
-=== Explicitly order highlighted fields
+==== Explicitly order highlighted fields
 Elasticsearch highlights the fields in the order that they are sent, but per the
 JSON spec, objects are unordered.  If you need to be explicit about the order
 in which fields are highlighted specify the `fields` as an array:
@@ -656,7 +679,7 @@ fields are highlighted but a plugin might.
 
 [float]
 [[control-highlighted-frags]]
-=== Control highlighted fragments
+==== Control highlighted fragments
 
 Each field highlighted can control the size of the highlighted fragment
 in characters (defaults to `100`), and the maximum number of fragments
@@ -757,7 +780,7 @@ GET /_search
 
 [float]
 [[highlight-postings-list]]
-=== Highlight using the postings list
+==== Highlight using the postings list
 
 Here is an example of setting the `comment` field in the index mapping to
 allow for highlighting using the postings:
@@ -767,12 +790,10 @@ allow for highlighting using the postings:
 PUT /example
 {
   "mappings": {
-    "doc" : {
-      "properties": {
-        "comment" : {
-          "type": "text",
-          "index_options" : "offsets"
-        }
+    "properties": {
+      "comment" : {
+        "type": "text",
+        "index_options" : "offsets"
       }
     }
   }
@@ -788,12 +809,10 @@ highlighting using the `term_vectors` (this will cause the index to be bigger):
 PUT /example
 {
   "mappings": {
-    "doc" : {
-      "properties": {
-        "comment" : {
-          "type": "text",
-          "term_vector" : "with_positions_offsets"
-        }
+    "properties": {
+      "comment" : {
+        "type": "text",
+        "term_vector" : "with_positions_offsets"
       }
     }
   }
@@ -803,14 +822,14 @@ PUT /example
 
 [float]
 [[specify-fragmenter]]
-=== Specify a fragmenter for the plain highlighter
+==== Specify a fragmenter for the plain highlighter
 
 When using the `plain` highlighter, you can choose between the `simple` and
 `span` fragmenters:
 
 [source,js]
 --------------------------------------------------
-GET twitter/tweet/_search
+GET twitter/_search
 {
     "query" : {
         "match_phrase": { "message": "number 1" }
@@ -832,17 +851,20 @@ GET twitter/tweet/_search
 
 Response:
 
-[source,js]
+[source,console-result]
 --------------------------------------------------
 {
     ...
     "hits": {
-        "total": 1,
+        "total" : {
+            "value": 1,
+            "relation": "eq"
+        },
         "max_score": 1.601195,
         "hits": [
             {
                 "_index": "twitter",
-                "_type": "tweet",
+                "_type": "_doc",
                 "_id": "1",
                 "_score": 1.601195,
                 "_source": {
@@ -866,7 +888,7 @@ Response:
 
 [source,js]
 --------------------------------------------------
-GET twitter/tweet/_search
+GET twitter/_search
 {
     "query" : {
         "match_phrase": { "message": "number 1" }
@@ -888,17 +910,20 @@ GET twitter/tweet/_search
 
 Response:
 
-[source,js]
+[source,console-result]
 --------------------------------------------------
 {
     ...
     "hits": {
-        "total": 1,
+        "total" : {
+            "value": 1,
+            "relation": "eq"
+        },
         "max_score": 1.601195,
         "hits": [
             {
                 "_index": "twitter",
-                "_type": "tweet",
+                "_type": "_doc",
                 "_id": "1",
                 "_score": 1.601195,
                 "_source": {
@@ -922,3 +947,6 @@ Response:
 If the `number_of_fragments` option is set to `0`,
 `NullFragmenter` is used which does not fragment the text at all.
 This is useful for highlighting the entire contents of a document or field.
+
+
+include::highlighters-internal.asciidoc[]

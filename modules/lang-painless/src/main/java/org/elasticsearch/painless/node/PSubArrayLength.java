@@ -19,8 +19,7 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Type;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
@@ -45,6 +44,11 @@ final class PSubArrayLength extends AStoreable {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        throw createError(new IllegalStateException("illegal tree structure"));
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         throw createError(new IllegalStateException("Illegal tree structure."));
     }
@@ -56,7 +60,7 @@ final class PSubArrayLength extends AStoreable {
                 throw createError(new IllegalArgumentException("Cannot write to read-only field [length] for an array."));
             }
 
-            actual = Definition.INT_TYPE;
+            actual = int.class;
         } else {
             throw createError(new IllegalArgumentException("Field [" + value + "] does not exist for type [" + type + "]."));
         }
@@ -79,7 +83,7 @@ final class PSubArrayLength extends AStoreable {
     }
 
     @Override
-    void updateActual(Type actual) {
+    void updateActual(Class<?> actual) {
         throw new IllegalStateException("Illegal tree structure.");
     }
 

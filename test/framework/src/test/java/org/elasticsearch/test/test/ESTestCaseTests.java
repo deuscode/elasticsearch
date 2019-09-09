@@ -38,9 +38,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
 
 public class ESTestCaseTests extends ESTestCase {
 
@@ -118,7 +120,7 @@ public class ESTestCaseTests extends ESTestCase {
                 }
             }
             builder.endObject();
-            BytesReference bytes = builder.bytes();
+            BytesReference bytes = BytesReference.bytes(builder);
             final LinkedHashMap<String, Object> initialMap;
             try (XContentParser parser = createParser(xContentType.xContent(), bytes)) {
                 initialMap = (LinkedHashMap<String, Object>)parser.mapOrdered();
@@ -165,5 +167,36 @@ public class ESTestCaseTests extends ESTestCase {
 
     public void testRandomUniqueNormalUsageAlwayMoreThanOne() {
         assertThat(randomUnique(() -> randomAlphaOfLengthBetween(1, 20), 10), hasSize(greaterThan(0)));
+    }
+
+    public void testRandomValueOtherThan() {
+        // "normal" way of calling where the value is not null
+        int bad = randomInt();
+        assertNotEquals(bad, (int) randomValueOtherThan(bad, ESTestCase::randomInt));
+
+        /*
+         * "funny" way of calling where the value is null. This once
+         * had a unique behavior but at this point `null` acts just
+         * like any other value.
+         */
+        Supplier<Object> usuallyNull = () -> usually() ? null : randomInt();
+        assertNotNull(randomValueOtherThan(null, usuallyNull));
+    }
+
+    public void testWorkerSystemProperty() {
+        assumeTrue("requires running tests with Gradle", System.getProperty("tests.gradle") != null);
+
+        assertThat(ESTestCase.TEST_WORKER_VM_ID, not(equals(ESTestCase.DEFAULT_TEST_WORKER_ID)));
+    }
+
+    public void testBasePortGradle() {
+        assumeTrue("requires running tests with Gradle", System.getProperty("tests.gradle") != null);
+        // Gradle worker IDs are 1 based
+        assertNotEquals(10300, ESTestCase.getBasePort());
+    }
+
+    public void testBasePortIDE() {
+        assumeTrue("requires running tests without Gradle", System.getProperty("tests.gradle") == null);
+        assertEquals(10300, ESTestCase.getBasePort());
     }
 }

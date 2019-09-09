@@ -18,6 +18,7 @@
  */
 package org.elasticsearch.gradle.test
 
+import org.elasticsearch.gradle.Version
 import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.tasks.Input
@@ -28,7 +29,7 @@ class ClusterConfiguration {
     private final Project project
 
     @Input
-    String distribution = 'integ-test-zip'
+    String distribution = 'default'
 
     @Input
     int numNodes = 1
@@ -37,7 +38,7 @@ class ClusterConfiguration {
     int numBwcNodes = 0
 
     @Input
-    String bwcVersion = null
+    Version bwcVersion = null
 
     @Input
     int httpPort = 0
@@ -63,13 +64,20 @@ class ClusterConfiguration {
     boolean debug = false
 
     /**
-     * if <code>true</code> each node will be configured with <tt>discovery.zen.minimum_master_nodes</tt> set
-     * to the total number of nodes in the cluster. This will also cause that each node has `0s` state recovery
-     * timeout which can lead to issues if for instance an existing clusterstate is expected to be recovered
-     * before any tests start
+     * Whether the initial_master_nodes setting should be automatically derived from the nodes
+     * in the cluster. Only takes effect if all nodes in the cluster understand this setting
+     * and the discovery type is not explicitly set.
      */
     @Input
-    boolean useMinimumMasterNodes = true
+    boolean autoSetInitialMasterNodes = true
+
+    /**
+     * Whether the file-based discovery provider should be automatically setup based on
+     * the nodes in the cluster. Only takes effect if no other hosts provider is already
+     * configured.
+     */
+    @Input
+    boolean autoSetHostsProvider = true
 
     @Input
     String jvmArgs = "-Xms" + System.getProperty('tests.heap.size', '512m') +
@@ -88,20 +96,34 @@ class ClusterConfiguration {
      * A closure to call which returns the unicast host to connect to for cluster formation.
      *
      * This allows multi node clusters, or a new cluster to connect to an existing cluster.
-     * The closure takes two arguments, the NodeInfo for the first node in the cluster, and
-     * an AntBuilder which may be used to wait on conditions before returning.
+     * The closure takes three arguments, the NodeInfo for the first node in the cluster,
+     * the NodeInfo for the node current being configured, an AntBuilder which may be used
+     * to wait on conditions before returning.
      */
     @Input
     Closure unicastTransportUri = { NodeInfo seedNode, NodeInfo node, AntBuilder ant ->
         if (seedNode == node) {
             return null
         }
-        ant.waitfor(maxwait: '40', maxwaitunit: 'second', checkevery: '500', checkeveryunit: 'millisecond') {
+        ant.waitfor(maxwait: '40', maxwaitunit: 'second', checkevery: '500', checkeveryunit: 'millisecond',
+                timeoutproperty: "failed.${seedNode.transportPortsFile.path}") {
             resourceexists {
                 file(file: seedNode.transportPortsFile.toString())
             }
         }
+        if (ant.properties.containsKey("failed.${seedNode.transportPortsFile.path}".toString())) {
+            throw new GradleException("Failed to locate seed node transport file [${seedNode.transportPortsFile}]: " +
+                    "timed out waiting for it to be created after 40 seconds")
+        }
         return seedNode.transportUri()
+    }
+
+    /**
+     * A closure to call which returns a manually supplied list of unicast seed hosts.
+     */
+    @Input
+    Closure<List<String>> otherUnicastHostAddresses = {
+        Collections.emptyList()
     }
 
     /**
@@ -125,20 +147,35 @@ class ClusterConfiguration {
         return tmpFile.exists()
     }
 
+    /**
+     * The maximum number of seconds to wait for nodes to complete startup, which includes writing
+     * the ports files for the transports and the pid file. This wait time occurs before the wait
+     * condition is executed.
+     */
+    @Input
+    int nodeStartupWaitSeconds = 30
+
     public ClusterConfiguration(Project project) {
         this.project = project
     }
 
-    Map<String, String> systemProperties = new HashMap<>()
+    // **Note** for systemProperties, settings, keystoreFiles etc:
+    // value could be a GString that is evaluated to just a String
+    // there are cases when value depends on task that is not executed yet on configuration stage
+    Map<String, Object> systemProperties = new HashMap<>()
+
+    Map<String, Object> environmentVariables = new HashMap<>()
 
     Map<String, Object> settings = new HashMap<>()
 
     Map<String, String> keystoreSettings = new HashMap<>()
 
+    Map<String, Object> keystoreFiles = new HashMap<>()
+
     // map from destination path, to source file
     Map<String, Object> extraConfigFiles = new HashMap<>()
 
-    LinkedHashMap<String, Project> plugins = new LinkedHashMap<>()
+    LinkedHashMap<String, Object> plugins = new LinkedHashMap<>()
 
     List<Project> modules = new ArrayList<>()
 
@@ -147,8 +184,13 @@ class ClusterConfiguration {
     List<Object> dependencies = new ArrayList<>()
 
     @Input
-    void systemProperty(String property, String value) {
+    void systemProperty(String property, Object value) {
         systemProperties.put(property, value)
+    }
+
+    @Input
+    void environment(String variable, Object value) {
+        environmentVariables.put(variable, value)
     }
 
     @Input
@@ -161,10 +203,24 @@ class ClusterConfiguration {
         keystoreSettings.put(name, value)
     }
 
+    /**
+     * Adds a file to the keystore. The name is the secure setting name, and the sourceFile
+     * is anything accepted by project.file()
+     */
+    @Input
+    void keystoreFile(String name, Object sourceFile) {
+        keystoreFiles.put(name, sourceFile)
+    }
+
     @Input
     void plugin(String path) {
         Project pluginProject = project.project(path)
         plugins.put(pluginProject.name, pluginProject)
+    }
+
+    @Input
+    void mavenPlugin(String name, String mavenCoords) {
+        plugins.put(name, mavenCoords)
     }
 
     /** Add a module to the cluster. The project must be an esplugin and have a single zip default artifact. */

@@ -19,9 +19,9 @@
 
 package org.elasticsearch.index.reindex;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.action.admin.indices.alias.Alias;
 import org.elasticsearch.action.index.IndexRequestBuilder;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.plugins.Plugin;
@@ -63,25 +63,25 @@ public class DeleteByQueryBasicTests extends ReindexTestCase {
                 client().prepareIndex("test", "test", "7").setSource("foo", "f")
         );
 
-        assertHitCount(client().prepareSearch("test").setTypes("test").setSize(0).get(), 7);
+        assertHitCount(client().prepareSearch("test").setSize(0).get(), 7);
 
         // Deletes two docs that matches "foo:a"
         assertThat(deleteByQuery().source("test").filter(termQuery("foo", "a")).refresh(true).get(), matcher().deleted(2));
-        assertHitCount(client().prepareSearch("test").setTypes("test").setSize(0).get(), 5);
+        assertHitCount(client().prepareSearch("test").setSize(0).get(), 5);
 
         // Deletes the two first docs with limit by size
         DeleteByQueryRequestBuilder request = deleteByQuery().source("test").filter(QueryBuilders.matchAllQuery()).size(2).refresh(true);
         request.source().addSort("foo.keyword", SortOrder.ASC);
         assertThat(request.get(), matcher().deleted(2));
-        assertHitCount(client().prepareSearch("test").setTypes("test").setSize(0).get(), 3);
+        assertHitCount(client().prepareSearch("test").setSize(0).get(), 3);
 
         // Deletes but match no docs
         assertThat(deleteByQuery().source("test").filter(termQuery("foo", "no_match")).refresh(true).get(), matcher().deleted(0));
-        assertHitCount(client().prepareSearch("test").setTypes("test").setSize(0).get(), 3);
+        assertHitCount(client().prepareSearch("test").setSize(0).get(), 3);
 
         // Deletes all remaining docs
         assertThat(deleteByQuery().source("test").filter(QueryBuilders.matchAllQuery()).refresh(true).get(), matcher().deleted(3));
-        assertHitCount(client().prepareSearch("test").setTypes("test").setSize(0).get(), 0);
+        assertHitCount(client().prepareSearch("test").setSize(0).get(), 0);
     }
 
     public void testDeleteByQueryWithOneIndex() throws Exception {
@@ -144,7 +144,7 @@ public class DeleteByQueryBasicTests extends ReindexTestCase {
     }
 
     public void testDeleteByQueryWithRouting() throws Exception {
-        assertAcked(prepareCreate("test").setSettings("number_of_shards", 2));
+        assertAcked(prepareCreate("test").setSettings(Settings.builder().put("number_of_shards", 2)));
         ensureGreen("test");
 
         final int docs = randomIntBetween(2, 10);
@@ -162,7 +162,7 @@ public class DeleteByQueryBasicTests extends ReindexTestCase {
         String routing = String.valueOf(randomIntBetween(2, docs));
 
         logger.info("--> counting documents with routing [{}]", routing);
-        long expected = client().prepareSearch().setSize(0).setRouting(routing).get().getHits().getTotalHits();
+        long expected = client().prepareSearch().setSize(0).setRouting(routing).get().getHits().getTotalHits().value;
 
         logger.info("--> delete all documents with routing [{}] with a delete-by-query", routing);
         DeleteByQueryRequestBuilder delete = deleteByQuery().source("test").filter(QueryBuilders.matchAllQuery());
@@ -236,7 +236,7 @@ public class DeleteByQueryBasicTests extends ReindexTestCase {
                 client().prepareIndex("test", "test", "6").setSource("foo", "e"),
                 client().prepareIndex("test", "test", "7").setSource("foo", "f")
         );
-        assertHitCount(client().prepareSearch("test").setTypes("test").setSize(0).get(), 7);
+        assertHitCount(client().prepareSearch("test").setSize(0).get(), 7);
 
         int slices = randomSlices();
         int expectedSlices = expectedSliceStatuses(slices, "test");
@@ -251,7 +251,7 @@ public class DeleteByQueryBasicTests extends ReindexTestCase {
             matcher()
                 .deleted(2)
                 .slices(hasSize(expectedSlices)));
-        assertHitCount(client().prepareSearch("test").setTypes("test").setSize(0).get(), 5);
+        assertHitCount(client().prepareSearch("test").setSize(0).get(), 5);
 
         // Delete remaining docs
         assertThat(
@@ -263,7 +263,7 @@ public class DeleteByQueryBasicTests extends ReindexTestCase {
             matcher()
                 .deleted(5)
                 .slices(hasSize(expectedSlices)));
-        assertHitCount(client().prepareSearch("test").setTypes("test").setSize(0).get(), 0);
+        assertHitCount(client().prepareSearch("test").setSize(0).get(), 0);
     }
 
     public void testMultipleSources() throws Exception {
@@ -301,30 +301,18 @@ public class DeleteByQueryBasicTests extends ReindexTestCase {
                 .slices(hasSize(expectedSlices)));
 
         for (String index : docs.keySet()) {
-            assertHitCount(client().prepareSearch(index).setTypes("test").setSize(0).get(), 0);
+            assertHitCount(client().prepareSearch(index).setSize(0).get(), 0);
         }
 
     }
 
-    /**
-     * Test delete by query support for filtering by type. This entire feature
-     * can and should be removed when we drop support for types index with
-     * multiple types from core.
-     */
-    public void testFilterByType() throws Exception {
-        assertAcked(client().admin().indices().prepareCreate("test")
-                .setSettings("index.version.created", Version.V_5_6_0.id)); // allows for multiple types
-        indexRandom(true,
-                client().prepareIndex("test", "test1", "1").setSource("foo", "a"),
-                client().prepareIndex("test", "test2", "2").setSource("foo", "a"),
-                client().prepareIndex("test", "test2", "3").setSource("foo", "b"));
-
-        assertHitCount(client().prepareSearch("test").setSize(0).get(), 3);
-
-        // Deletes doc of the type "type2" that also matches foo:a
-        DeleteByQueryRequestBuilder builder = deleteByQuery().source("test").filter(termQuery("foo", "a")).refresh(true);
-        builder.source().setTypes("test2");
-        assertThat(builder.get(), matcher().deleted(1));
-        assertHitCount(client().prepareSearch("test").setSize(0).get(), 2);
+    public void testMissingSources() {
+        BulkByScrollResponse response = updateByQuery()
+            .source("missing-index-*")
+            .refresh(true)
+            .setSlices(AbstractBulkByScrollRequest.AUTO_SLICES)
+            .get();
+        assertThat(response, matcher().deleted(0).slices(hasSize(0)));
     }
+
 }

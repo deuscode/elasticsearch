@@ -19,10 +19,10 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
 
 import java.util.Set;
@@ -39,6 +39,11 @@ public final class EBoolean extends AExpression {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        // Do nothing.
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         // Do nothing.
     }
@@ -49,7 +54,7 @@ public final class EBoolean extends AExpression {
             throw createError(new IllegalArgumentException("Must read from constant [" + constant + "]."));
         }
 
-        actual = Definition.BOOLEAN_TYPE;
+        actual = boolean.class;
     }
 
     @Override

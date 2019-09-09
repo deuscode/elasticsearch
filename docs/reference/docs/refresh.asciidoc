@@ -1,5 +1,5 @@
 [[docs-refresh]]
-== `?refresh`
+=== `?refresh`
 
 The <<docs-index_,Index>>, <<docs-update,Update>>, <<docs-delete,Delete>>, and
 <<docs-bulk,Bulk>> APIs support setting `refresh` to control when changes made
@@ -30,7 +30,7 @@ Take no refresh related actions. The changes made by this request will be made
 visible at some point after the request returns.
 
 [float]
-=== Choosing which setting to use
+==== Choosing which setting to use
 
 Unless you have a good reason to wait for the change to become visible always
 use `refresh=false`, or, because that is the default, just leave the `refresh`
@@ -46,7 +46,7 @@ compared to `true`. In the case that the index is only changed once every
 `index.refresh_interval` then it saves no work.
 * `true` creates less efficient indexes constructs (tiny segments) that must
 later be merged into more efficient index constructs (larger segments). Meaning
-that the cost of `true` is payed at index time to create the tiny segment, at
+that the cost of `true` is paid at index time to create the tiny segment, at
 search time to search the tiny segment, and at merge time to make the larger
 segments.
 * Never start multiple `refresh=wait_for` requests in a row. Instead batch them
@@ -63,7 +63,8 @@ general, if you have a running system you don't wish to disturb then
 `refresh=wait_for` is a smaller modification.
 
 [float]
-=== `refresh=wait_for` Can Force a Refresh
+[[refresh_wait_for-force-refresh]]
+==== `refresh=wait_for` Can Force a Refresh
 
 If a `refresh=wait_for` request comes in when there are already
 `index.max_refresh_listeners` (defaults to 1000) requests waiting for a refresh
@@ -78,15 +79,15 @@ Bulk requests only take up one slot on each shard that they touch no matter how
 many times they modify the shard.
 
 [float]
-=== Examples
+==== Examples
 
 These will create a document and immediately refresh the index so it is visible:
 
 [source,js]
 --------------------------------------------------
-PUT /test/test/1?refresh
+PUT /test/_doc/1?refresh
 {"test": "test"}
-PUT /test/test/2?refresh=true
+PUT /test/_doc/2?refresh=true
 {"test": "test"}
 --------------------------------------------------
 // CONSOLE
@@ -96,9 +97,9 @@ search:
 
 [source,js]
 --------------------------------------------------
-PUT /test/test/3
+PUT /test/_doc/3
 {"test": "test"}
-PUT /test/test/4?refresh=false
+PUT /test/_doc/4?refresh=false
 {"test": "test"}
 --------------------------------------------------
 // CONSOLE
@@ -107,7 +108,7 @@ This will create a document and wait for it to become visible for search:
 
 [source,js]
 --------------------------------------------------
-PUT /test/test/4?refresh=wait_for
+PUT /test/_doc/4?refresh=wait_for
 {"test": "test"}
 --------------------------------------------------
 // CONSOLE

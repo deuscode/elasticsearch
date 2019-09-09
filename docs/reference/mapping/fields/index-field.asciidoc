@@ -13,15 +13,15 @@ in a `term` or `terms` query (or any query that is rewritten to a `term`
 query, such as the `match`,  `query_string` or `simple_query_string` query),
 but it does not support `prefix`, `wildcard`, `regexp`, or `fuzzy` queries.
 
-[source,js]
+[source,console]
 --------------------------
 # Example documents
-PUT index_1/my_type/1
+PUT index_1/_doc/1
 {
   "text": "Document in index 1"
 }
 
-PUT index_2/my_type/2?refresh=true
+PUT index_2/_doc/2?refresh=true
 {
   "text": "Document in index 2"
 }
@@ -58,7 +58,6 @@ GET index_1,index_2/_search
   }
 }
 --------------------------
-// CONSOLE
 
 <1> Querying on the `_index` field
 <2> Aggregating on the `_index` field

@@ -29,7 +29,7 @@ POST _analyze
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -155,7 +155,6 @@ POST _analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 
@@ -197,6 +196,9 @@ TIP:  It usually makes sense to set `min_gram` and `max_gram` to the same
 value.  The smaller the length, the more documents will match but the lower
 the quality of the matches.  The longer the length, the more specific the
 matches.  A tri-gram (length `3`) is a good place to start.
+
+The index level setting `index.max_ngram_diff` controls the maximum allowed
+difference between `max_gram` and `min_gram`.
 
 [float]
 === Example configuration
@@ -240,7 +242,7 @@ POST my_index/_analyze
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -289,7 +291,6 @@ POST my_index/_analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 

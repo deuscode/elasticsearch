@@ -22,6 +22,7 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
@@ -56,7 +57,13 @@ final class PercolatorMatchedSlotSubFetchPhase implements FetchSubPhase {
 
     @Override
     public void hitsExecute(SearchContext context, SearchHit[] hits) throws IOException {
-        List<PercolateQuery> percolateQueries = locatePercolatorQuery(context.query());
+        innerHitsExecute(context.query(), context.searcher(), hits);
+    }
+
+    static void innerHitsExecute(Query mainQuery,
+                                 IndexSearcher indexSearcher,
+                                 SearchHit[] hits) throws IOException {
+        List<PercolateQuery> percolateQueries = locatePercolatorQuery(mainQuery);
         if (percolateQueries.isEmpty()) {
             return;
         }
@@ -65,7 +72,8 @@ final class PercolatorMatchedSlotSubFetchPhase implements FetchSubPhase {
         for (PercolateQuery percolateQuery : percolateQueries) {
             String fieldName = singlePercolateQuery ? FIELD_NAME_PREFIX : FIELD_NAME_PREFIX + "_" + percolateQuery.getName();
             IndexSearcher percolatorIndexSearcher = percolateQuery.getPercolatorIndexSearcher();
-            Weight weight = percolatorIndexSearcher.createNormalizedWeight(Queries.newNonNestedFilter(), false);
+            Weight weight = percolatorIndexSearcher.createWeight(percolatorIndexSearcher.rewrite(Queries.newNonNestedFilter()),
+                ScoreMode.COMPLETE_NO_SCORES, 1f);
             Scorer s = weight.scorer(percolatorIndexSearcher.getIndexReader().leaves().get(0));
             int memoryIndexMaxDoc = percolatorIndexSearcher.getIndexReader().maxDoc();
             BitSet rootDocs = BitSet.of(s.iterator(), memoryIndexMaxDoc);
@@ -76,14 +84,18 @@ final class PercolatorMatchedSlotSubFetchPhase implements FetchSubPhase {
             }
 
             PercolateQuery.QueryStore queryStore = percolateQuery.getQueryStore();
-            List<LeafReaderContext> ctxs = context.searcher().getIndexReader().leaves();
+            List<LeafReaderContext> ctxs = indexSearcher.getIndexReader().leaves();
             for (SearchHit hit : hits) {
                 LeafReaderContext ctx = ctxs.get(ReaderUtil.subIndex(hit.docId(), ctxs));
                 int segmentDocId = hit.docId() - ctx.docBase;
                 Query query = queryStore.getQueries(ctx).apply(segmentDocId);
+                if (query == null) {
+                    // This is not a document with a percolator field.
+                    continue;
+                }
 
                 TopDocs topDocs = percolatorIndexSearcher.search(query, memoryIndexMaxDoc, new Sort(SortField.FIELD_DOC));
-                if (topDocs.totalHits == 0) {
+                if (topDocs.totalHits.value == 0) {
                     // This hit didn't match with a percolate query,
                     // likely to happen when percolating multiple documents
                     continue;

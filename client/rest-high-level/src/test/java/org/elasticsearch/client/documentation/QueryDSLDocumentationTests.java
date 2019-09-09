@@ -23,12 +23,13 @@ import org.apache.lucene.search.join.ScoreMode;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.geo.ShapeRelation;
 import org.elasticsearch.common.geo.builders.CoordinatesBuilder;
-import org.elasticsearch.common.geo.builders.ShapeBuilders;
+import org.elasticsearch.common.geo.builders.MultiPointBuilder;
 import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.index.query.GeoShapeQueryBuilder;
 import org.elasticsearch.index.query.functionscore.FunctionScoreQueryBuilder;
 import org.elasticsearch.index.query.functionscore.FunctionScoreQueryBuilder.FilterFunctionBuilder;
 import org.elasticsearch.join.query.JoinQueryBuilders;
+import org.elasticsearch.index.query.RankFeatureQueryBuilders;
 import org.elasticsearch.script.Script;
 import org.elasticsearch.script.ScriptType;
 import org.elasticsearch.test.ESTestCase;
@@ -42,7 +43,6 @@ import java.util.Map;
 import static java.util.Collections.singletonMap;
 import static org.elasticsearch.index.query.QueryBuilders.boolQuery;
 import static org.elasticsearch.index.query.QueryBuilders.boostingQuery;
-import static org.elasticsearch.index.query.QueryBuilders.commonTermsQuery;
 import static org.elasticsearch.index.query.QueryBuilders.constantScoreQuery;
 import static org.elasticsearch.index.query.QueryBuilders.disMaxQuery;
 import static org.elasticsearch.index.query.QueryBuilders.existsQuery;
@@ -74,8 +74,8 @@ import static org.elasticsearch.index.query.QueryBuilders.spanTermQuery;
 import static org.elasticsearch.index.query.QueryBuilders.spanWithinQuery;
 import static org.elasticsearch.index.query.QueryBuilders.termQuery;
 import static org.elasticsearch.index.query.QueryBuilders.termsQuery;
-import static org.elasticsearch.index.query.QueryBuilders.typeQuery;
 import static org.elasticsearch.index.query.QueryBuilders.wildcardQuery;
+import static org.elasticsearch.index.query.QueryBuilders.wrapperQuery;
 import static org.elasticsearch.index.query.functionscore.ScoreFunctionBuilders.exponentialDecayFunction;
 import static org.elasticsearch.index.query.functionscore.ScoreFunctionBuilders.randomFunction;
 
@@ -104,13 +104,6 @@ public class QueryDSLDocumentationTests extends ESTestCase {
                     termQuery("name","dadoonet"))                    // <2>
                 .negativeBoost(0.2f);                                // <3>
         // end::boosting
-    }
-
-    public void testCommonTerms() {
-        // tag::common_terms
-        commonTermsQuery("name",                                     // <1>
-                         "kimchy");                                  // <2>
-        // end::common_terms
     }
 
     public void testConstantScore() {
@@ -189,7 +182,7 @@ public class QueryDSLDocumentationTests extends ESTestCase {
             // tag::geo_shape
             GeoShapeQueryBuilder qb = geoShapeQuery(
                     "pin.location",                                      // <1>
-                    ShapeBuilders.newMultiPoint(                         // <2>
+                    new MultiPointBuilder(                         // <2>
                             new CoordinatesBuilder()
                         .coordinate(0, 0)
                         .coordinate(0, 10)
@@ -206,11 +199,10 @@ public class QueryDSLDocumentationTests extends ESTestCase {
             // Using pre-indexed shapes
             GeoShapeQueryBuilder qb = geoShapeQuery(
                         "pin.location",                                  // <1>
-                        "DEU",                                           // <2>
-                        "countries");                                    // <3>
-            qb.relation(ShapeRelation.WITHIN)                            // <4>
-                .indexedShapeIndex("shapes")                             // <5>
-                .indexedShapePath("location");                           // <6>
+                        "DEU");                                  // <2>
+            qb.relation(ShapeRelation.WITHIN)                            // <3>
+                .indexedShapeIndex("shapes")                             // <4>
+                .indexedShapePath("location");                           // <5>
             // end::indexed_geo_shape
         }
     }
@@ -235,9 +227,6 @@ public class QueryDSLDocumentationTests extends ESTestCase {
 
     public void testIds() {
         // tag::ids
-        idsQuery("my_type", "type2")
-                .addIds("1", "4", "100");
-
         idsQuery()                                                   // <1>
                 .addIds("1", "4", "100");
         // end::ids
@@ -436,17 +425,42 @@ public class QueryDSLDocumentationTests extends ESTestCase {
         // end::terms
     }
 
-    public void testType() {
-        // tag::type
-        typeQuery("my_type");                                        // <1>
-        // end::type
-    }
-
     public void testWildcard() {
         // tag::wildcard
         wildcardQuery(
                 "user",                                              // <1>
                 "k?mch*");                                           // <2>
         // end::wildcard
+    }
+
+    public void testWrapper() {
+        // tag::wrapper
+        String query = "{\"term\": {\"user\": \"kimchy\"}}"; // <1>
+        wrapperQuery(query);
+        // end::wrapper
+    }
+
+    public void testRankFeatureSaturation() {
+        RankFeatureQueryBuilders.saturation(
+            "pagerank"); // <1>
+    }
+
+    public void testRankFeatureSaturationPivot() {
+        RankFeatureQueryBuilders.saturation(
+            "pagerank",     // <1>
+            8);                 // <2>
+    }
+
+    public void testRankFeatureLog() {
+        RankFeatureQueryBuilders.log(
+            "pagerank",     // <1>
+            4f);          // <2>
+    }
+
+    public void testRankFeatureSigmoid() {
+        RankFeatureQueryBuilders.sigmoid(
+            "pagerank",   // <1>
+            7,                // <2>
+            0.6f);             // <3>
     }
 }

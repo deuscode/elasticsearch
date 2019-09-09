@@ -30,20 +30,30 @@ import java.util.List;
 
 final class Netty4SizeHeaderFrameDecoder extends ByteToMessageDecoder {
 
+    private static final int HEADER_SIZE = TcpHeader.MARKER_BYTES_SIZE + TcpHeader.MESSAGE_LENGTH_SIZE;
+
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception {
         try {
-            boolean continueProcessing = TcpTransport.validateMessageHeader(Netty4Utils.toBytesReference(in));
-            final ByteBuf message = in.skipBytes(TcpHeader.MARKER_BYTES_SIZE + TcpHeader.MESSAGE_LENGTH_SIZE);
-            if (!continueProcessing) return;
-            out.add(message);
+            while (in.readableBytes() >= HEADER_SIZE) {
+                int messageLength = TcpTransport.readMessageLength(Netty4Utils.toBytesReference(in));
+                if (messageLength == -1) {
+                    break;
+                } else {
+                    int messageLengthWithHeader = messageLength + HEADER_SIZE;
+                    // If the message length is greater than the network bytes available, we have not read a complete frame.
+                    if (messageLengthWithHeader > in.readableBytes()) {
+                        break;
+                    } else {
+                        final int readerIndex = in.readerIndex();
+                        final ByteBuf message = in.retainedSlice(readerIndex + HEADER_SIZE, messageLength);
+                        out.add(message);
+                        in.readerIndex(readerIndex + messageLengthWithHeader);
+                    }
+                }
+            }
         } catch (IllegalArgumentException ex) {
             throw new TooLongFrameException(ex);
-        } catch (IllegalStateException ex) {
-            /* decode will be called until the ByteBuf is fully consumed; when it is fully
-             * consumed, transport#validateMessageHeader will throw an IllegalStateException which
-             * is okay, it means we have finished consuming the ByteBuf and we can get out
-             */
         }
     }
 

@@ -19,7 +19,7 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
@@ -48,6 +48,15 @@ public final class SWhile extends AStatement {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        condition.storeSettings(settings);
+
+        if (block != null) {
+            block.storeSettings(settings);
+        }
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         condition.extractVariables(variables);
         if (block != null) {
@@ -59,7 +68,7 @@ public final class SWhile extends AStatement {
     void analyze(Locals locals) {
         locals = Locals.newLocalScope(locals);
 
-        condition.expected = Definition.BOOLEAN_TYPE;
+        condition.expected = boolean.class;
         condition.analyze(locals);
         condition = condition.cast(locals);
 

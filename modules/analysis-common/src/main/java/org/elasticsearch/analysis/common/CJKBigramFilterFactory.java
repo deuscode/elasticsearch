@@ -19,16 +19,20 @@
 
 package org.elasticsearch.analysis.common;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.cjk.CJKBigramFilter;
 import org.apache.lucene.analysis.miscellaneous.DisableGraphAttribute;
+import org.elasticsearch.common.logging.DeprecationLogger;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.analysis.AbstractTokenFilterFactory;
+import org.elasticsearch.index.analysis.TokenFilterFactory;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -47,16 +51,19 @@ import java.util.Set;
  */
 public final class CJKBigramFilterFactory extends AbstractTokenFilterFactory {
 
+    private static final DeprecationLogger DEPRECATION_LOGGER
+        = new DeprecationLogger(LogManager.getLogger(CJKBigramFilterFactory.class));
+
     private final int flags;
     private final boolean outputUnigrams;
 
     CJKBigramFilterFactory(IndexSettings indexSettings, Environment environment, String name, Settings settings) {
         super(indexSettings, name, settings);
         outputUnigrams = settings.getAsBoolean("output_unigrams", false);
-        final String[] asArray = settings.getAsArray("ignored_scripts");
+        final List<String> asArray = settings.getAsList("ignored_scripts");
         Set<String> scripts = new HashSet<>(Arrays.asList("han", "hiragana", "katakana", "hangul"));
         if (asArray != null) {
-            scripts.removeAll(Arrays.asList(asArray));
+            scripts.removeAll(asArray);
         }
         int flags = 0;
         for (String script : scripts) {
@@ -88,4 +95,11 @@ public final class CJKBigramFilterFactory extends AbstractTokenFilterFactory {
         return filter;
     }
 
+    @Override
+    public TokenFilterFactory getSynonymFilter() {
+        if (outputUnigrams) {
+            throw new IllegalArgumentException("Token filter [" + name() + "] cannot be used to parse synonyms");
+        }
+        return this;
+    }
 }

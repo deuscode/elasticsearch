@@ -19,6 +19,7 @@
 
 package org.elasticsearch.painless.node;
 
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
@@ -44,15 +45,20 @@ public class PSubNullSafeCallInvoke extends AExpression {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        throw createError(new IllegalStateException("illegal tree structure"));
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
-        guarded.extractVariables(variables);
+        throw createError(new IllegalStateException("illegal tree structure"));
     }
 
     @Override
     void analyze(Locals locals) {
         guarded.analyze(locals);
         actual = guarded.actual;
-        if (actual.clazz.isPrimitive()) {
+        if (actual.isPrimitive()) {
             throw new IllegalArgumentException("Result of null safe operator must be nullable");
         }
     }

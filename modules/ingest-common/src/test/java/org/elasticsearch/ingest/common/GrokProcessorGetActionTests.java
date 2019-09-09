@@ -19,6 +19,7 @@
 
 package org.elasticsearch.ingest.common;
 
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.xcontent.ToXContent;
@@ -33,7 +34,6 @@ import java.util.Map;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.core.IsNull.nullValue;
 
-
 public class GrokProcessorGetActionTests extends ESTestCase {
     private static final Map<String, String> TEST_PATTERNS = Collections.singletonMap("PATTERN", "foo");
 
@@ -42,8 +42,7 @@ public class GrokProcessorGetActionTests extends ESTestCase {
         BytesStreamOutput out = new BytesStreamOutput();
         request.writeTo(out);
         StreamInput streamInput = out.bytes().streamInput();
-        GrokProcessorGetAction.Request otherRequest = new GrokProcessorGetAction.Request();
-        otherRequest.readFrom(streamInput);
+        GrokProcessorGetAction.Request otherRequest = new GrokProcessorGetAction.Request(streamInput);
         assertThat(otherRequest.validate(), nullValue());
     }
 
@@ -52,8 +51,7 @@ public class GrokProcessorGetActionTests extends ESTestCase {
         BytesStreamOutput out = new BytesStreamOutput();
         response.writeTo(out);
         StreamInput streamInput = out.bytes().streamInput();
-        GrokProcessorGetAction.Response otherResponse = new GrokProcessorGetAction.Response(null);
-        otherResponse.readFrom(streamInput);
+        GrokProcessorGetAction.Response otherResponse = new GrokProcessorGetAction.Response(streamInput);
         assertThat(response.getGrokPatterns(), equalTo(TEST_PATTERNS));
         assertThat(response.getGrokPatterns(), equalTo(otherResponse.getGrokPatterns()));
     }
@@ -63,7 +61,7 @@ public class GrokProcessorGetActionTests extends ESTestCase {
         GrokProcessorGetAction.Response response = new GrokProcessorGetAction.Response(TEST_PATTERNS);
         try (XContentBuilder builder = JsonXContent.contentBuilder()) {
             response.toXContent(builder, ToXContent.EMPTY_PARAMS);
-            Map<String, Object> converted = XContentHelper.convertToMap(builder.bytes(), false, builder.contentType()).v2();
+            Map<String, Object> converted = XContentHelper.convertToMap(BytesReference.bytes(builder), false, builder.contentType()).v2();
             Map<String, String> patterns = (Map<String, String>) converted.get("patterns");
             assertThat(patterns.size(), equalTo(1));
             assertThat(patterns.get("PATTERN"), equalTo("foo"));
